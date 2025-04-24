@@ -104,11 +104,19 @@ void sendGamepad(ControllerState *gamepadState) {
 void processGamepad(GamepadPtr gp, unsigned controllerIndex) {
     CalibrationData *calibrationData = &controllerCalibrations[controllerIndex];
     uint32_t *receiverIndex = &receiverIndexes[controllerIndex];
+    // if (!calibrationData->isCalibrated) {
+    //     calibrationData->axisX = gp->axisX();
+    //     calibrationData->axisY = gp->axisY();
+    //     calibrationData->axisRX = gp->axisRX();
+    //     calibrationData->axisRY = gp->axisRY();
+    //     calibrationData->isCalibrated = true;
+    // }
+    // Calibration seems to cause more problems than it solves so disabling for now, if you have a controller with drift you can try commenting the following code and uncommenting the previous code.
     if (!calibrationData->isCalibrated) {
-        calibrationData->axisX = gp->axisX();
-        calibrationData->axisY = gp->axisY();
-        calibrationData->axisRX = gp->axisRX();
-        calibrationData->axisRY = gp->axisRY();
+        calibrationData->axisX = 0;
+        calibrationData->axisY = 0;
+        calibrationData->axisRX = 0;
+        calibrationData->axisRY = 0;
         calibrationData->isCalibrated = true;
     }
     if (gp) {
