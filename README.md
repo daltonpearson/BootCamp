@@ -1,10 +1,10 @@
-# RC Vehicle Control System
+# BootCamp - RC Vehicle Control System
 
-A wireless remote control system for multiple RC vehicles using ESP32 microcontrollers with ESP-NOW communication protocol. The system supports controlling different vehicle types (excavator, dump truck, semi-trailer, and forklift) from a single base station controller.
+**BootCamp** is a wireless remote control system for multiple RC vehicles using ESP32 microcontrollers with ESP-NOW communication protocol. The system supports controlling different vehicle types (excavator, dump truck, semi-trailer, and forklift) from a single base station controller.
 
 ## System Overview
 
-This project implements a **one-to-many** wireless control system where:
+BootCamp implements a **one-to-many** wireless control system where:
 - **Base Station**: Receives input from a Bluetooth controller and broadcasts commands via ESP-NOW
 - **Vehicle Receivers**: Each vehicle has an ESP32 that receives commands and controls motors/servos
 - **Controller Support**: Xbox and PS4/DualShock controllers supported
@@ -28,7 +28,7 @@ BootCamp/
 
 ## Vehicle Types & Features
 
-This control system is designed for RC vehicles created by **ProfessorBoots**. For detailed vehicle designs, build instructions, and 3D printable files:
+BootCamp is designed for RC vehicles created by **ProfessorBoots**. For detailed vehicle designs, build instructions, and 3D printable files:
 - **Website**: [professorboots.com](https://professorboots.com/)
 - **GitHub**: [ProfessorBoots GitHub](https://github.com/ProfBoots)
 
@@ -42,7 +42,7 @@ This control system is designed for RC vehicles created by **ProfessorBoots**. F
 - 🏗️ **Crane** (Receiver Index: TBD) - *Not yet implemented*
 - 🚜 **SkidSteer** (Receiver Index: TBD) - *Not yet implemented*
 
-Each vehicle features realistic movement controls, working lights, and specialized functions appropriate to the vehicle type. The wireless control system allows seamless switching between vehicles using controller buttons.
+Each vehicle features realistic movement controls, working lights, and specialized functions appropriate to the vehicle type. BootCamp's wireless control system allows seamless switching between vehicles using controller buttons.
 
 ## Hardware Requirements
 
@@ -241,7 +241,7 @@ The original project used Arduino `.ino` files with direct Bluetooth controller 
 - **Website**: [professorboots.com](https://professorboots.com/) - Plans, instructions, and resources
 - **GitHub**: [ProfessorBoots GitHub](https://github.com/ProfBoots) - 3D printable files and code
 - Original vehicle designs and mechanical engineering by ProfessorBoots
-- This project provides the wireless control system software for his vehicle designs
+- BootCamp provides the wireless control system software for his vehicle designs
 
 ## License
 
@@ -254,9 +254,10 @@ The original project used Arduino `.ino` files with direct Bluetooth controller 
 ## Support
 
 For issues and questions:
+- **BootCamp Software/Control System**: Check the troubleshooting section, review serial monitor output
 - **Vehicle Hardware/Mechanical**: Visit [professorboots.com](https://professorboots.com/) or [ProfessorBoots GitHub](https://github.com/ProfBoots)
 - Verify hardware connections and power supply
 
 ---
 
-*This wireless control system demonstrates advanced ESP32 capabilities including wireless communication, multi-device coordination, and real-time control systems for ProfessorBoots' RC vehicle designs.*
+*BootCamp demonstrates advanced ESP32 capabilities including wireless communication, multi-device coordination, and real-time control systems for ProfessorBoots' RC vehicle designs.*
