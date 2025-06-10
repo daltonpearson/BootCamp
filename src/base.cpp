@@ -124,44 +124,30 @@ bool dataSent = true;
 //     );
 // }
 void dumpGamepadState(ControllerState *gamepadState) {
-
-    // typedef struct ControllerState {
-    //   uint32_t receiverIndex;
-    //   uint16_t buttons;
-    //   uint8_t dpad;
-    //   int32_t axisX, axisY;
-    //   int32_t axisRX, axisRY;
-    //   uint32_t brake, throttle;
-    //   uint16_t miscButtons;
-    //   bool thumbR, thumbL, r1, l1, r2, l2;
-    // };
-    Serial.printf(
-        "idx=%d, dpad: 0x%02x, buttons: 0x%04x, axis L: %4d, %4d, axis R: %4d, %4d, brake: %4d, throttle: %4d "
-        "misc: 0x%02x, misc Forward: %d, misc Backward: %d, misc Reset: %d, R1: %d, L1: %d, R2: %d, L2: %d\n",
-        gamepadState->receiverIndex,        // Receiver Index
-        gamepadState->dpad,         // D-pad
-        gamepadState->buttons,      // bitmask of pressed buttons
-        gamepadState->axisX,        // (-511 - 512) left X Axis
-        gamepadState->axisY,        // (-511 - 512) left Y axis
-        gamepadState->axisRX,       // (-511 - 512) right X axis
-        gamepadState->axisRY,       // (-511 - 512) right Y axis
-        gamepadState->brake,        // (0 - 1023): brake button
-        gamepadState->throttle,     // (0 - 1023): throttle (AKA gas) button
-        gamepadState->miscButtons,  // bitmask of pressed "misc" buttons
+    Serial.printf("ID:%d | BTN:0x%04x | DPAD:0x%02x | L:%d,%d | R:%d,%d | BT:%d TH:%d | MISC:0x%02x | FWD:%d BWD:%d RST:%d | R1:%d L1:%d R2:%d L2:%d | TL:%d TR:%d\n",
+        gamepadState->receiverIndex,
+        gamepadState->buttons,
+        gamepadState->dpad,
+        gamepadState->axisX,
+        gamepadState->axisY,
+        gamepadState->axisRX,
+        gamepadState->axisRY,
+        gamepadState->brake,
+        gamepadState->throttle,
+        gamepadState->miscButtons,
         gamepadState->miscButtons & controllerMapping.miscForwardMask,
         gamepadState->miscButtons & controllerMapping.miscBackwardMask,
         gamepadState->miscButtons & controllerMapping.miscResetMask,
         gamepadState->r1,
         gamepadState->l1,
         gamepadState->r2,
-        gamepadState->l2
-
+        gamepadState->l2,
+        gamepadState->thumbL,
+        gamepadState->thumbR
     );
 }
 void sendGamepad(ControllerState *gamepadState) {
   esp_err_t result = esp_now_send(broadcastAddress, (uint8_t *)gamepadState, sizeof(*gamepadState));
-  Serial.println(sizeof(*gamepadState));
-  Serial.println((char *)gamepadState);
   dumpGamepadState(gamepadState);
 }
 // Controller event callback
