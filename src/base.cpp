@@ -71,7 +71,7 @@ const char* CONTROLLER_TYPE = "PS4";
 
 ControllerPtr myControllers[BP32_MAX_GAMEPADS];
 // Structure to hold controller state
-typedef struct ControllerState {
+struct ControllerState {
     uint32_t receiverIndex;
     uint16_t buttons;
     uint8_t dpad;
@@ -83,7 +83,7 @@ typedef struct ControllerState {
 };
 int miscButtonTime = 0;
 
-typedef struct CalibrationData {
+struct CalibrationData {
     int32_t axisX, axisY, axisRX, axisRY;
     bool isCalibrated;
 };
@@ -94,35 +94,6 @@ ControllerState gamepadStates[BP32_MAX_GAMEPADS];
 uint8_t broadcastAddress[] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
 bool dataSent = true;
 
-// Variable to store controller state
-// ControllerState gamepadState;
-
-// ESP-NOW peer info
-// esp_now_peer_info_t peerInfo;
-
-// void dumpGamepad(ControllerPtr ctl) {
-//     Serial.printf(
-//         "idx=%d, dpad: 0x%02x, buttons: 0x%04x, axis L: %4d, %4d, axis R: %4d, %4d, brake: %4d, throttle: %4d, "
-//         "misc: 0x%02x, gyro x:%6d y:%6d z:%6d, accel x:%6d y:%6d z:%6d\n",
-//         ctl->index(),        // Controller Index
-//         ctl->dpad(),         // D-pad
-//         ctl->buttons(),      // bitmask of pressed buttons
-//         ctl->axisX(),        // (-511 - 512) left X Axis
-//         ctl->axisY(),        // (-511 - 512) left Y axis
-//         ctl->axisRX(),       // (-511 - 512) right X axis
-//         ctl->axisRY(),       // (-511 - 512) right Y axis
-//         ctl->brake(),        // (0 - 1023): brake button
-//         ctl->throttle(),     // (0 - 1023): throttle (AKA gas) button
-//         ctl->miscButtons(),  // bitmask of pressed "misc" buttons
-//         ctl->gyroX(),        // Gyro X
-//         ctl->gyroY(),        // Gyro Y
-//         ctl->gyroZ(),        // Gyro Z
-//         ctl->accelX(),       // Accelerometer X
-//         ctl->accelY(),       // Accelerometer Y
-//         ctl->accelZ(),        // Accelerometer Z
-//         ctl->r1()
-//     );
-// }
 void dumpGamepadState(ControllerState *gamepadState) {
     Serial.printf("ID:%d | BTN:0x%04x | DPAD:0x%02x | L:%d,%d | R:%d,%d | BT:%d TH:%d | MISC:0x%02x | FWD:%d BWD:%d RST:%d | R1:%d L1:%d R2:%d L2:%d | TL:%d TR:%d\n",
         gamepadState->receiverIndex,
@@ -198,7 +169,6 @@ void processGamepad(GamepadPtr gp, unsigned controllerIndex) {
           }
 
           miscButtonTime = millis();
-          // Serial.println(gamepadState.receiver_index);
         }
         sendGamepad(gamepadState);
 
@@ -257,8 +227,6 @@ void setup() {
     Serial.println("=======================================");
 
     // Initialize Bluepad32
-    // BP32.setup(&onControllerData);
-
     BP32.setup(&onConnectedController, &onDisconnectedController);
     // Set device as Wi-Fi station
     WiFi.mode(WIFI_STA);
@@ -299,88 +267,14 @@ void processControllers() {
   }
   dataSent = true;
 }
-// void processGamepad(ControllerPtr ctl) {
-//   //Throttle
-//   processThrottle(ctl->axisY());
-//   //Steering
-//   processSteering(ctl->axisRX());
-//   //DumpBed
-//   processDumpBed(ctl->dpad());
-//   //Aux
-//   processAux(ctl->thumbR());
 
-//   processTrimRight(ctl->r1());
-//   processTrimLeft(ctl->l1());
-
-// }
 void loop() {
-    // Fetch controller updates
-
-    // bool dataUpdated = BP32.update();
-    // if (dataUpdated) {
-    //   processControllers();
-    //   esp_err_t result = esp_now_send(receiverMAC, (uint8_t *)&controllerData, sizeof(controllerData));
-
-    //   if (result == ESP_OK) {
-    //       Serial.println("Sent successfully");
-    //   } else {
-    //       Serial.println(result);
-    //   }
-    // }
-    // // The main loop must have some kind of "yield to lower priority task" event.
-    // // Otherwise, the watchdog will get triggered.
-    // // If your main loop doesn't have one, just add a simple `vTaskDelay(1)`.
-    // // Detailed info here:
-    // // https://stackoverflow.com/questions/66278271/task-watchdog-got-triggered-the-tasks-did-not-reset-the-watchdog-in-time
-
-    // //     vTaskDelay(1);
-    //     // Send controller state
-
-    // else { vTaskDelay(1); }
-    // delay(100);
-    // // Send controller state
-    // // esp_err_t result = esp_now_send(receiverMAC, (uint8_t *)&controllerData, sizeof(controllerData));
-
-    // // if (result == ESP_OK) {
-    // //     Serial.println("Sent successfully");
-    // // } else {
-    // //     Serial.println("Send failed");
-    // // }
-
-    // // delay(100);  // Send updates every 100ms
-
-    //     // Fetch controller updates
-    bool dataUpdated = BP32.update();
-    if (dataUpdated & dataSent) {
-      dataSent = false;
-      processControllers();
-
-          // Broadcast gamepad state via ESP-NOW
-      // esp_err_t result = esp_now_send(broadcastAddress, (uint8_t *)&gamepadState, sizeof(gamepadState));
-      // dumpGamepadState();
-      // printState();
-      // Serial.print("Sending GamepadState | Buttons: ");
-      // Serial.print(gamepadState.buttons);
-      // Serial.print(" | DPad: ");
-      // Serial.print(gamepadState.dpad);
-      // Serial.print(" | L.X: ");
-      // Serial.print(gamepadState.axisX);
-      // Serial.print(" | L.Y: ");
-      // Serial.println(gamepadState.axisY);
-      // Serial.print(" | MiscButtons: ");
-      // Serial.print(gamepadState.miscButtons);
-      // Serial.print(" | ReceiverIndex: ");
-      // Serial.print(gamepadState.receiverIndex);
-
-      // if (result == ESP_OK) {
-      //     // Serial.println("Broadcast sent successfully ✅");
-      // } else {
-      //     Serial.println("Broadcast send failed ❌");
-      // }
-    } else { vTaskDelay(1); }
-
-
+  // Fetch controller updates
+  bool dataUpdated = BP32.update();
+  if (dataUpdated & dataSent) {
+    dataSent = false;
+    processControllers();
+  } else { vTaskDelay(1); }
     // delay(100);  // Send updates every 100ms
 }
 
-// 0x02 left 10, 0x04 right 100, 0x08 middle 1000, 0x01 xbox button 1
