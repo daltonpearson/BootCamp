@@ -1,9 +1,7 @@
 #include <Arduino.h>
 #include <ESP32Servo.h>  // by Kevin Harrington
-// #include <Bluepad32.h>
 #include <esp_now.h>
 #include <WiFi.h>
-//25,26,32,33,21,19,22,23,2,4,17,16
 
 
 uint32_t thisReceiverIndex = 4;
@@ -98,16 +96,6 @@ void OnDataRecv(const uint8_t * mac, const uint8_t *incomingData, int len) {
       memcpy(&receivedData, &tempReceivedData, sizeof(receivedData));
       dataUpdated = true;
     }
-    // Serial.print("Buttons: ");
-    // Serial.println(receivedData.buttons);
-
-    // Serial.print("Axis X: ");
-    // Serial.println(receivedData.axisX);
-
-    // Serial.print("Axis Y: ");
-    // Serial.println(receivedData.axisY);
-
-    // Serial.println("----------------------");
 }
 
 void moveMotor(int motorPin0, int motorPin1, int velocity) {
@@ -194,7 +182,6 @@ void processTrimAndHitch(int dpadValue) {
   }
 }
 void processSteering(int axisRXValue) {
-  // Serial.println(axisRXValue);
   adjustedSteeringValue = (90 - (axisRXValue / 9)) - steeringTrim;
   frontSteeringServo.write(180 - adjustedSteeringValue);
 
@@ -313,11 +300,8 @@ void processGamepad() {
   processLights(receivedData.thumbR);
   processSmokeGen(receivedData.thumbL);
 
-//   processTrailerLegsUp(receivedData.y);
-//   processTrailerLegsDown(receivedData.a);
-//   processTrailerRampUp(receivedData.b);
-//   processTrailerRampDown(receivedData.x);
-    processTrailerLegsUp(receivedData.buttons);
+
+  processTrailerLegsUp(receivedData.buttons);
   processTrailerLegsDown(receivedData.buttons);
   processTrailerRampUp(receivedData.buttons);
   processTrailerRampDown(receivedData.buttons);
@@ -386,20 +370,9 @@ void processControllers() {
   processGamepad();
 }
 
-// Arduino setup function. Runs in CPU 1
 void setup() {
   Serial.begin(115200);
-  //   put your setup code here, to run once:
-//   Serial.printf("Firmware: %s\n", BP32.firmwareVersion());
-//   const uint8_t *addr = BP32.localBdAddress();
-//   Serial.printf("BD Addr: %2X:%2X:%2X:%2X:%2X:%2X\n", addr[0], addr[1], addr[2], addr[3], addr[4], addr[5]);
 
-//   // Setup the Bluepad32 callbacks
-//   BP32.setup(&onConnectedController, &onDisconnectedController);
-
-//   BP32.forgetBluetoothKeys();
-
-//   BP32.enableVirtualDevice(false);
   pinMode(rearMotor0, OUTPUT);
   pinMode(rearMotor1, OUTPUT);
   pinMode(rearMotor2, OUTPUT);
@@ -451,19 +424,9 @@ void setup() {
 
 // Arduino loop function. Runs in CPU 1.
 void loop() {
-  // This call fetches all the controllers' data.
-  // Call this function in your main loop.
-//   bool dataUpdated = BP32.update();
   if (dataUpdated) {
     processControllers();
     dataUpdated = false;
   }
-  // The main loop must have some kind of "yield to lower priority task" event.
-  // Otherwise, the watchdog will get triggered.
-  // If your main loop doesn't have one, just add a simple `vTaskDelay(1)`.
-  // Detailed info here:
-  // https://stackoverflow.com/questions/66278271/task-watchdog-got-triggered-the-tasks-did-not-reset-the-watchdog-in-time
-
-  //     vTaskDelay(1);
   else { vTaskDelay(1); }
 }
