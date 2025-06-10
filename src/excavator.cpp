@@ -159,10 +159,13 @@ void processBoom(int axisYValue) {
 }
 void processPivot(int axisYValue) {
   int adjustedValue = axisYValue / 2;
-  if (adjustedValue > 100) {
+  // Create a deadzone in the center - only activate when stick is moved to edges
+  int deadzone = 75; // Deadzone threshold
+  
+  if (adjustedValue > (100 + deadzone)) {
     mcp.digitalWrite(pivot0, HIGH);
     mcp.digitalWrite(pivot1, LOW);
-  } else if (adjustedValue < -100) {
+  } else if (adjustedValue < (-100 - deadzone)) {
     mcp.digitalWrite(pivot0, LOW);
     mcp.digitalWrite(pivot1, HIGH);
   } else {
@@ -197,20 +200,20 @@ void processBucket(int axisYValue) {
   }
 }
 void processAux(int dpadValue) {
-  if (dpadValue == 1) {
+  if (dpadValue == 4) {
     mcp.digitalWrite(thumb0, HIGH);
     mcp.digitalWrite(thumb1, LOW);
-  } else if (dpadValue == 2) {
+  } else if (dpadValue == 8) {
     mcp.digitalWrite(thumb0, LOW);
     mcp.digitalWrite(thumb1, HIGH);
   } else {
     mcp.digitalWrite(thumb0, LOW);
     mcp.digitalWrite(thumb1, LOW);
   }
-  if (dpadValue == 4) {
+  if (dpadValue == 1) {
     mcp.digitalWrite(auxAttach0, HIGH);
     mcp.digitalWrite(auxAttach1, LOW);
-  } else if (dpadValue == 8) {
+  } else if (dpadValue == 2) {
     mcp.digitalWrite(auxAttach0, LOW);
     mcp.digitalWrite(auxAttach1, HIGH);
   } else {
@@ -289,12 +292,11 @@ void processGamepad() {
   } else {
     moveAuxServoDown = false;
     moveAuxServoUp = false;
-  }
-  if (moveClawServoUp) {
+  }  if (moveClawServoUp) {
     if (servoDelay == 2) {
-      if (clawServoValue >= 10 && clawServoValue < 170) {
+      if (clawServoValue >= 10 && clawServoValue <= 164) {
         //if using a ps3 controller that was flashed an xbox360 controller change the value "2" below to a 3-4 to make up for the slower movement.
-        clawServoValue = clawServoValue + 2;
+        clawServoValue = clawServoValue + 6;
         clawServo.write(clawServoValue);
       }
       servoDelay = 0;
@@ -303,9 +305,9 @@ void processGamepad() {
   }
   if (moveClawServoDown) {
     if (servoDelay == 2) {
-      if (clawServoValue <= 170 && clawServoValue > 10) {
+      if (clawServoValue <= 170 && clawServoValue >= 16) {
          //if using a ps3 controller that was flashed an xbox360 controller change the value "2" below to a 3-4 to make up for the slower movement.
-        clawServoValue = clawServoValue - 2;
+        clawServoValue = clawServoValue - 6;
         clawServo.write(clawServoValue);
       }
       servoDelay = 0;
@@ -316,7 +318,7 @@ void processGamepad() {
     if (servoDelay == 2) {
       if (auxServoValue >= 10 && auxServoValue < 170) {
          //if using a ps3 controller that was flashed an xbox360 controller change the value "2" below to a 3-4 to make up for the slower movement.
-        auxServoValue = auxServoValue + 2;
+        auxServoValue = auxServoValue + 4;
         auxServo.write(auxServoValue);
       }
       servoDelay = 0;
