@@ -18,6 +18,9 @@ typedef struct struct_message {
 } struct_message;
 
 bool dataUpdated;
+bool connectionActive = false; // Tracks if connection is currently active
+unsigned long lastPacketTime = 0; // Timestamp of last received packet
+const unsigned long CONNECTION_TIMEOUT = 3000; // 3 seconds timeout for connection
 struct_message receivedData;
 
 // Forward declarations
@@ -30,6 +33,7 @@ void processMastTilt(int dpadValue);
 void processAux(bool buttonValue);
 void moveMotor(int motorPin0, int motorPin1, int velocity);
 void processControllers();
+void flashConnectionIndicator();
 
 #define steeringServoPin 23
 #define mastTiltServoPin 22
@@ -73,7 +77,35 @@ void OnDataRecv(const uint8_t * mac, const uint8_t *incomingData, int len) {
     if (tempReceivedData.receiverIndex == thisReceiverIndex){
       memcpy(&receivedData, &tempReceivedData, sizeof(receivedData));
       dataUpdated = true;
+      
+      // Update connection timestamp
+      lastPacketTime = millis();
+      
+      // Check if connection needs to be re-established
+      if (!connectionActive) {
+        connectionActive = true;
+        flashConnectionIndicator();
+      }
     }
+}
+
+// Function to move steering servo left and right as a connection indicator
+void flashConnectionIndicator() {
+  // Store original position
+  float originalPosition = adjustedSteeringValue;
+  
+  // Flash the steering servo left and right twice
+  for (int i = 0; i < 2; i++) {
+    // Turn left
+    steeringServo.write(120);
+    delay(150);
+    // Turn right
+    steeringServo.write(60);
+    delay(150);
+  }
+  
+  // Return to original position
+  steeringServo.write(originalPosition);
 }
 
 void processGamepad() {
@@ -229,6 +261,10 @@ void setup() {
   pinMode(leftMotor1, OUTPUT);
   pinMode(rightMotor0, OUTPUT);
   pinMode(rightMotor1, OUTPUT);
+  
+  // Initialize connection variables
+  connectionActive = false;
+  lastPacketTime = 0;
 
   steeringServo.attach(steeringServoPin);
   steeringServo.write(adjustedSteeringValue);
@@ -255,12 +291,26 @@ void loop() {
     processControllers();
     dataUpdated = false;
   }
-  // The main loop must have some kind of "yield to lower priority task" event.
-  // Otherwise, the watchdog will get triggered.
-  // If your main loop doesn't have one, just add a simple `vTaskDelay(1)`.
-  // Detailed info here:
-  // https://stackoverflow.com/questions/66278271/task-watchdog-got-triggered-the-tasks-did-not-reset-the-watchdog-in-time
+  else { 
+    // Check if connection has timed out
+    if (connectionActive && (millis() - lastPacketTime > CONNECTION_TIMEOUT)) {
+      // Connection lost, reset the flag so steering will flash on reconnection
+      connectionActive = false;
+      // Stop motors for safety when connection is lost
+      moveMotor(leftMotor0, leftMotor1, 0);
+      moveMotor(rightMotor0, rightMotor1, 0);
+      moveMotor(mastMotor0, mastMotor1, 0);
+    }
+    vTaskDelay(1); 
+  }
 
-  //     vTaskDelay(1);
-  else { vTaskDelay(1); }
+  // Check for connection timeout
+  if (connectionActive && (millis() - lastPacketTime > CONNECTION_TIMEOUT)) {
+    // Connection has timed out
+    connectionActive = false;
+    // Stop all motors
+    moveMotor(leftMotor0, leftMotor1, 0);
+    moveMotor(rightMotor0, rightMotor1, 0);
+    moveMotor(mastMotor0, mastMotor1, 0);
+  }
 }
