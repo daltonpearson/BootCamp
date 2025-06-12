@@ -86,7 +86,12 @@ Each vehicle features realistic movement controls, working lights, and specializ
    #define CONTROLLER_PS4   
    ```
 
-3. **Build and upload base station:**
+3. **Important: Uninstall espressif32 package before building base:**
+   ```bash
+   pio pkg uninstall -p espressif32
+   ```
+
+4. **Build and upload base station:**
    ```bash
    pio run -e base --target upload
    ```
@@ -156,6 +161,10 @@ typedef struct {
 ## Troubleshooting
 
 ### Common Issues
+
+**Base station build fails:**
+- Make sure you ran `pio pkg uninstall -p espressif32` before building
+- This is required due to a dependency conflict with the ESP32 Bluetooth library
 
 **Controller not connecting:**
 - Ensure correct controller type is selected in `base.cpp`
