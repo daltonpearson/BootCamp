@@ -166,20 +166,20 @@ void processBucket(int axisYValue) {
   }
 }
 void processAux(int dpadValue) {
-  if (dpadValue == 4) {
+  if (dpadValue == 1) {
     mcp.digitalWrite(thumb0, HIGH);
     mcp.digitalWrite(thumb1, LOW);
-  } else if (dpadValue == 8) {
+  } else if (dpadValue == 2) {
     mcp.digitalWrite(thumb0, LOW);
     mcp.digitalWrite(thumb1, HIGH);
   } else {
     mcp.digitalWrite(thumb0, LOW);
     mcp.digitalWrite(thumb1, LOW);
   }
-  if (dpadValue == 1) {
+  if (dpadValue == 4) {
     mcp.digitalWrite(auxAttach0, HIGH);
     mcp.digitalWrite(auxAttach1, LOW);
-  } else if (dpadValue == 2) {
+  } else if (dpadValue == 8) {
     mcp.digitalWrite(auxAttach0, LOW);
     mcp.digitalWrite(auxAttach1, HIGH);
   } else {
