@@ -55,9 +55,9 @@ const ButtonMapping controllerMapping = {
     .buttonB = 1,           // Circle (O) button - typically mapped to B  
     .buttonX = 4,           // Square button - typically mapped to X
     .buttonY = 8,           // Triangle button - typically mapped to Y
-    .miscForwardMask = 256, // Share button (bit 8)
-    .miscBackwardMask = 512,// Options button (bit 9)
-    .miscResetMask = 1024   // PS button (bit 10)
+    .miscForwardMask = 4, // Share button
+    .miscBackwardMask = 2,// Options button
+    .miscResetMask = 1   // PS button
 };
 const char* CONTROLLER_TYPE = "PS4";
 #endif
