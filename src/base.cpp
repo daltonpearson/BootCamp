@@ -2,6 +2,73 @@
 #include <esp_now.h>
 #include <WiFi.h>
 #include <esp_wifi.h>
+
+// ============================================
+// CONTROLLER CONFIGURATION
+// ============================================
+// INSTRUCTIONS:
+// 1. Uncomment ONE of the following lines to select your controller type
+// 2. Comment out the other line 
+// 3. Upload the code to your ESP32
+//
+// For Xbox/Xbox-style controllers (original configuration):
+#define CONTROLLER_XBOX     
+//
+// For PS4/DualShock 4 controllers:
+// #define CONTROLLER_PS4   
+//
+// The misc buttons are used to switch between receivers:
+// - Forward button: increment receiver index (next vehicle)
+// - Backward button: decrement receiver index (previous vehicle)  
+// - Reset button: reset receiver index to 0
+// ============================================
+
+// Button mapping structures
+typedef struct ButtonMapping {
+    uint16_t buttonA;
+    uint16_t buttonB; 
+    uint16_t buttonX;
+    uint16_t buttonY;
+    uint16_t miscForwardMask;
+    uint16_t miscBackwardMask;
+    uint16_t miscResetMask;
+} ButtonMapping;
+
+// Xbox controller button mappings (original)
+#ifdef CONTROLLER_XBOX
+const ButtonMapping controllerMapping = {
+    .buttonA = 1,           // A button
+    .buttonB = 2,           // B button  
+    .buttonX = 4,           // X button
+    .buttonY = 8,           // Y button
+    .miscForwardMask = 4,   // Forward button mask
+    .miscBackwardMask = 2,  // Backward button mask
+    .miscResetMask = 8      // Reset button mask
+};
+const char* CONTROLLER_TYPE = "Xbox";
+#endif
+
+// PS4 controller button mappings
+#ifdef CONTROLLER_PS4
+const ButtonMapping controllerMapping = {
+    .buttonA = 2,           // Cross (X) button - typically mapped to A
+    .buttonB = 1,           // Circle (O) button - typically mapped to B  
+    .buttonX = 4,           // Square button - typically mapped to X
+    .buttonY = 8,           // Triangle button - typically mapped to Y
+    .miscForwardMask = 4, // Share button
+    .miscBackwardMask = 2,// Options button
+    .miscResetMask = 1   // PS button
+};
+const char* CONTROLLER_TYPE = "PS4";
+#endif
+
+// Fallback if no controller is selected
+#if !defined(CONTROLLER_XBOX) && !defined(CONTROLLER_PS4)
+#error "Please select a controller type by uncommenting either CONTROLLER_XBOX or CONTROLLER_PS4"
+#endif
+
+// ============================================
+
 ControllerPtr myControllers[BP32_MAX_GAMEPADS];
 // Structure to hold controller state
 struct ControllerState {
@@ -15,9 +82,6 @@ struct ControllerState {
     bool thumbR, thumbL, r1, l1, r2, l2;
 };
 int miscButtonTime = 0;
-uint16_t miscForwardMask = 4;
-uint16_t miscBackwardMask = 2;
-uint16_t miscResetMask = 8;
 
 struct CalibrationData {
     int32_t axisX, axisY, axisRX, axisRY;
@@ -31,33 +95,30 @@ uint8_t broadcastAddress[] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
 bool dataSent = true;
 
 void dumpGamepadState(ControllerState *gamepadState) {
-    Serial.printf(
-        "idx=%d, dpad: 0x%02x, buttons: 0x%04x, axis L: %4d, %4d, axis R: %4d, %4d, brake: %4d, throttle: %4d "
-        "misc: 0x%02x, misc Forward: %d, misc Backward: %d, misc Reset: %d, R1: %d, L1: %d, R2: %d, L2: %d\n",
-        gamepadState->receiverIndex,        // Receiver Index
-        gamepadState->dpad,         // D-pad
-        gamepadState->buttons,      // bitmask of pressed buttons
-        gamepadState->axisX,        // (-511 - 512) left X Axis
-        gamepadState->axisY,        // (-511 - 512) left Y axis
-        gamepadState->axisRX,       // (-511 - 512) right X axis
-        gamepadState->axisRY,       // (-511 - 512) right Y axis
-        gamepadState->brake,        // (0 - 1023): brake button
-        gamepadState->throttle,     // (0 - 1023): throttle (AKA gas) button
-        gamepadState->miscButtons,  // bitmask of pressed "misc" buttons
-        gamepadState->miscButtons & miscForwardMask,
-        gamepadState->miscButtons & miscBackwardMask,
-        gamepadState->miscButtons & miscResetMask,
+    Serial.printf("ID:%d | BTN:0x%04x | DPAD:0x%02x | L:%d,%d | R:%d,%d | BT:%d TH:%d | MISC:0x%02x | FWD:%d BWD:%d RST:%d | R1:%d L1:%d R2:%d L2:%d | TL:%d TR:%d\n",
+        gamepadState->receiverIndex,
+        gamepadState->buttons,
+        gamepadState->dpad,
+        gamepadState->axisX,
+        gamepadState->axisY,
+        gamepadState->axisRX,
+        gamepadState->axisRY,
+        gamepadState->brake,
+        gamepadState->throttle,
+        gamepadState->miscButtons,
+        gamepadState->miscButtons & controllerMapping.miscForwardMask,
+        gamepadState->miscButtons & controllerMapping.miscBackwardMask,
+        gamepadState->miscButtons & controllerMapping.miscResetMask,
         gamepadState->r1,
         gamepadState->l1,
         gamepadState->r2,
-        gamepadState->l2
-
+        gamepadState->l2,
+        gamepadState->thumbL,
+        gamepadState->thumbR
     );
 }
 void sendGamepad(ControllerState *gamepadState) {
   esp_err_t result = esp_now_send(broadcastAddress, (uint8_t *)gamepadState, sizeof(*gamepadState));
-  Serial.println(sizeof(*gamepadState));
-  Serial.println((char *)gamepadState);
   dumpGamepadState(gamepadState);
 }
 // Controller event callback
@@ -99,11 +160,11 @@ void processGamepad(GamepadPtr gp, unsigned controllerIndex) {
 
         gamepadState->miscButtons = gp->miscButtons();
         if (gamepadState->miscButtons && (millis() - miscButtonTime) > 200) {
-          if (gamepadState->miscButtons & miscForwardMask) {
+          if (gamepadState->miscButtons & controllerMapping.miscForwardMask) {
             gamepadState->receiverIndex++;
-          } else if (gamepadState->miscButtons & miscBackwardMask) {
+          } else if (gamepadState->miscButtons & controllerMapping.miscBackwardMask) {
             gamepadState->receiverIndex--;
-          } else if (gamepadState->miscButtons & miscResetMask) {
+          } else if (gamepadState->miscButtons & controllerMapping.miscResetMask) {
             gamepadState->receiverIndex = 0;
           }
 
@@ -155,6 +216,15 @@ void OnDataSent(const uint8_t *mac_addr, esp_now_send_status_t status) {
 }
 void setup() {
     Serial.begin(115200);
+    
+    // Print controller configuration
+    Serial.println("=======================================");
+    Serial.printf("Base Station Initialized\n");
+    Serial.printf("Controller Type: %s\n", CONTROLLER_TYPE);
+    Serial.printf("Forward Mask: 0x%04x\n", controllerMapping.miscForwardMask);
+    Serial.printf("Backward Mask: 0x%04x\n", controllerMapping.miscBackwardMask);
+    Serial.printf("Reset Mask: 0x%04x\n", controllerMapping.miscResetMask);
+    Serial.println("=======================================");
 
     // Initialize Bluepad32
     BP32.setup(&onConnectedController, &onDisconnectedController);

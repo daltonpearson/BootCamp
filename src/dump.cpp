@@ -15,6 +15,10 @@ typedef struct struct_message {
     bool thumbR, thumbL, r1, l1, r2, l2;
 } struct_message;
 bool dataUpdated;
+bool initialConnectionMade = false; // Flag to track if initial connection has been established
+bool connectionActive = false; // Tracks if connection is currently active
+unsigned long lastPacketTime = 0; // Timestamp of last received packet
+const unsigned long CONNECTION_TIMEOUT = 3000; // 3 seconds timeout for connection
 struct_message receivedData;
 // ControllerPtr myControllers[BP32_MAX_GAMEPADS];
 
@@ -38,6 +42,9 @@ struct_message receivedData;
 #define BACKWARD -1
 #define STOP 0
 
+// Forward function declarations
+void flashConnectionIndicator();
+
 Servo steeringServo;
 Servo auxServo;
 int lightSwitchTime = 0;
@@ -53,6 +60,15 @@ void OnDataRecv(const uint8_t * mac, const uint8_t *incomingData, int len) {
     if (tempReceivedData.receiverIndex == thisReceiverIndex){
       memcpy(&receivedData, &tempReceivedData, sizeof(receivedData));
       dataUpdated = true;
+      
+      // Update connection timestamp
+      lastPacketTime = millis();
+      
+      // Check if connection needs to be re-established
+      if (!connectionActive) {
+        connectionActive = true;
+        flashConnectionIndicator();
+      }
     }
     // Serial.print("Buttons: ");
     // Serial.println(receivedData.buttons);
@@ -98,7 +114,18 @@ void moveServo(int movement, Servo &servo, int &servoValue) {
   }
 }
 
-
+// Function to flash lights as a connection indicator
+void flashConnectionIndicator() {
+  // Flash the lights 3 times when connected
+  for (int i = 0; i < 3; i++) {
+    digitalWrite(auxAttach0, HIGH);
+    digitalWrite(auxAttach1, LOW);
+    delay(200);
+    digitalWrite(auxAttach0, LOW);
+    digitalWrite(auxAttach1, LOW);
+    delay(200);
+  }
+}
 
 void processThrottle(int axisYValue) {
   int adjustedThrottleValue = axisYValue / 2;
@@ -184,11 +211,16 @@ void setup() {
   pinMode(auxAttach1, OUTPUT);
   digitalWrite(auxAttach2, LOW);
   digitalWrite(auxAttach3, LOW);
+  digitalWrite(auxAttach0, LOW);
+  digitalWrite(auxAttach1, LOW);
   pinMode(leftMotor0, OUTPUT);
   pinMode(leftMotor1, OUTPUT);
   pinMode(rightMotor0, OUTPUT);
   pinMode(rightMotor1, OUTPUT);
 
+  // Initialize connection variables
+  connectionActive = false;
+  lastPacketTime = 0;
 
   steeringServo.attach(steeringServoPin);
   steeringServo.write(adjustedSteeringValue);
@@ -212,5 +244,15 @@ void loop() {
     processControllers();
     dataUpdated = false;
   }
-  else { vTaskDelay(1); }
+  else { 
+    // Check if connection has timed out
+    if (connectionActive && (millis() - lastPacketTime > CONNECTION_TIMEOUT)) {
+      // Connection lost, reset the flag so lights will flash on reconnection
+      connectionActive = false;
+      // Stop motors for safety when connection is lost
+      moveMotor(leftMotor0, leftMotor1, 0);
+      moveMotor(rightMotor0, rightMotor1, 0);
+    }
+    vTaskDelay(1); 
+  }
 }
