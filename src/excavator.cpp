@@ -15,6 +15,9 @@ typedef struct struct_message {
     bool thumbR, thumbL, r1, l1, r2, l2;
 } struct_message;
 bool dataUpdated;
+bool connectionActive = false; // Tracks if connection is currently active
+unsigned long lastPacketTime = 0; // Timestamp of last received packet
+const unsigned long CONNECTION_TIMEOUT = 3000; // 3 seconds timeout for connection
 struct_message receivedData;
 // defines
 #define clawServoPin 5
@@ -43,6 +46,9 @@ struct_message receivedData;
 #define leftMotor1 6
 #define rightMotor0 4
 #define rightMotor1 5
+
+// Forward declarations
+void flashConnectionIndicator();
 
 Adafruit_MCP23X17 mcp;
 Servo clawServo;
@@ -88,10 +94,18 @@ void dumpGamepadState() {
 // Callback function for received data
 void OnDataRecv(const uint8_t * mac, const uint8_t *incomingData, int len) {
     struct_message tempReceivedData;
-    memcpy(&tempReceivedData, incomingData, sizeof(receivedData));
-    if (tempReceivedData.receiverIndex == thisReceiverIndex){
+    memcpy(&tempReceivedData, incomingData, sizeof(receivedData));    if (tempReceivedData.receiverIndex == thisReceiverIndex){
       memcpy(&receivedData, &tempReceivedData, sizeof(receivedData));
       dataUpdated = true;
+      
+      // Update connection timestamp
+      lastPacketTime = millis();
+      
+      // Check if connection needs to be re-established
+      if (!connectionActive) {
+        connectionActive = true;
+        flashConnectionIndicator();
+      }
     }
 }
 
@@ -111,10 +125,13 @@ void processBoom(int axisYValue) {
 }
 void processPivot(int axisYValue) {
   int adjustedValue = axisYValue / 2;
-  if (adjustedValue > 100) {
+  // Create a deadzone in the center - only activate when stick is moved to edges
+  int deadzone = 75; // Deadzone threshold
+  
+  if (adjustedValue > (100 + deadzone)) {
     mcp.digitalWrite(pivot0, HIGH);
     mcp.digitalWrite(pivot1, LOW);
-  } else if (adjustedValue < -100) {
+  } else if (adjustedValue < (-100 - deadzone)) {
     mcp.digitalWrite(pivot0, LOW);
     mcp.digitalWrite(pivot1, HIGH);
   } else {
@@ -241,12 +258,11 @@ void processGamepad() {
   } else {
     moveAuxServoDown = false;
     moveAuxServoUp = false;
-  }
-  if (moveClawServoUp) {
+  }  if (moveClawServoUp) {
     if (servoDelay == 2) {
-      if (clawServoValue >= 10 && clawServoValue < 170) {
+      if (clawServoValue >= 10 && clawServoValue <= 164) {
         //if using a ps3 controller that was flashed an xbox360 controller change the value "2" below to a 3-4 to make up for the slower movement.
-        clawServoValue = clawServoValue + 2;
+        clawServoValue = clawServoValue + 6;
         clawServo.write(clawServoValue);
       }
       servoDelay = 0;
@@ -255,9 +271,9 @@ void processGamepad() {
   }
   if (moveClawServoDown) {
     if (servoDelay == 2) {
-      if (clawServoValue <= 170 && clawServoValue > 10) {
+      if (clawServoValue <= 170 && clawServoValue >= 16) {
          //if using a ps3 controller that was flashed an xbox360 controller change the value "2" below to a 3-4 to make up for the slower movement.
-        clawServoValue = clawServoValue - 2;
+        clawServoValue = clawServoValue - 6;
         clawServo.write(clawServoValue);
       }
       servoDelay = 0;
@@ -268,7 +284,7 @@ void processGamepad() {
     if (servoDelay == 2) {
       if (auxServoValue >= 10 && auxServoValue < 170) {
          //if using a ps3 controller that was flashed an xbox360 controller change the value "2" below to a 3-4 to make up for the slower movement.
-        auxServoValue = auxServoValue + 2;
+        auxServoValue = auxServoValue + 4;
         auxServo.write(auxServoValue);
       }
       servoDelay = 0;
@@ -293,6 +309,10 @@ void processControllers() {
 void setup() {
 
   Serial.begin(115200);
+
+  // Initialize connection variables
+  connectionActive = false;
+  lastPacketTime = 0;
 
   mcp.begin_I2C();
   //   put your setup code here, to run once:
@@ -336,6 +356,34 @@ void loop() {
       dataUpdated = false;
     }
   }
+  else { 
+    // Check if connection has timed out
+    if (connectionActive && (millis() - lastPacketTime > CONNECTION_TIMEOUT)) {
+      // Connection lost, reset the flag so lights will flash on reconnection
+      connectionActive = false;
+      // Stop all motors for safety when connection is lost
+      mcp.digitalWrite(mainBoom0, LOW);
+      mcp.digitalWrite(mainBoom1, LOW);
+      mcp.digitalWrite(dipper0, LOW);
+      mcp.digitalWrite(dipper1, LOW);
+      mcp.digitalWrite(pivot0, LOW);
+      mcp.digitalWrite(pivot1, LOW);
+      mcp.digitalWrite(leftMotor0, LOW);
+      mcp.digitalWrite(leftMotor1, LOW);
+      mcp.digitalWrite(rightMotor0, LOW);
+      mcp.digitalWrite(rightMotor1, LOW);
+    }
+    vTaskDelay(1); 
+  }
+}
 
-  else { vTaskDelay(1); }
+// Function to flash lights as a connection indicator
+void flashConnectionIndicator() {
+  // Flash the cab lights 3 times when connected
+  for (int i = 0; i < 3; i++) {
+    digitalWrite(cabLights, HIGH);
+    delay(200);
+    digitalWrite(cabLights, LOW);
+    delay(200);
+  }
 }

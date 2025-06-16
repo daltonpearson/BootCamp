@@ -17,6 +17,9 @@ typedef struct struct_message {
     bool thumbR, thumbL, r1, l1, r2, l2;
 } struct_message;
 bool dataUpdated;
+bool connectionActive = false; // Tracks if connection is currently active
+unsigned long lastPacketTime = 0; // Timestamp of last received packet
+const unsigned long CONNECTION_TIMEOUT = 3000; // 3 seconds timeout for connection
 struct_message receivedData;
 uint16_t buttonMaskY = 8;
 uint16_t buttonMaskA = 1;
@@ -69,6 +72,8 @@ Servo hitchServo;
 #define auxAttach4 25  // \ "Aux3" on PCB. Used for controlling auxillary motors or lights.
 #define auxAttach5 26  // /
 
+// Forward declarations
+void flashConnectionIndicator();
 
 int lightSwitchButtonTime = 0;
 int lightSwitchTime = 0;
@@ -95,7 +100,31 @@ void OnDataRecv(const uint8_t * mac, const uint8_t *incomingData, int len) {
     if (tempReceivedData.receiverIndex == thisReceiverIndex){
       memcpy(&receivedData, &tempReceivedData, sizeof(receivedData));
       dataUpdated = true;
+      
+      // Update connection timestamp
+      lastPacketTime = millis();
+      
+      // Check if connection needs to be re-established
+      if (!connectionActive) {
+        connectionActive = true;
+        flashConnectionIndicator();
+      }
     }
+}
+
+// Function to flash lights as a connection indicator
+void flashConnectionIndicator() {
+  // Flash the lights 3 times when connected
+  for (int i = 0; i < 3; i++) {
+    digitalWrite(LT1, HIGH);
+    digitalWrite(LT2, HIGH);
+    digitalWrite(LT3, HIGH);
+    delay(200);
+    digitalWrite(LT1, LOW);
+    digitalWrite(LT2, LOW);
+    digitalWrite(LT3, LOW);
+    delay(200);
+  }
 }
 
 void moveMotor(int motorPin0, int motorPin1, int velocity) {
@@ -373,6 +402,10 @@ void processControllers() {
 void setup() {
   Serial.begin(115200);
 
+  // Initialize connection variables
+  connectionActive = false;
+  lastPacketTime = 0;
+
   pinMode(rearMotor0, OUTPUT);
   pinMode(rearMotor1, OUTPUT);
   pinMode(rearMotor2, OUTPUT);
@@ -429,4 +462,25 @@ void loop() {
     dataUpdated = false;
   }
   else { vTaskDelay(1); }
+
+  // Check for connection timeout
+  if (connectionActive && (millis() - lastPacketTime > CONNECTION_TIMEOUT)) {
+    connectionActive = false;
+    // Handle connection timeout (e.g., stop motors, reset values, etc.)
+    digitalWrite(rearMotor0, LOW);
+    digitalWrite(rearMotor1, LOW);
+    digitalWrite(rearMotor2, LOW);
+    digitalWrite(rearMotor3, LOW);
+    digitalWrite(frontMotor0, LOW);
+    digitalWrite(frontMotor1, LOW);
+    digitalWrite(auxAttach0, LOW);
+    digitalWrite(auxAttach1, LOW);
+    digitalWrite(auxAttach2, LOW);
+    digitalWrite(auxAttach3, LOW);
+    digitalWrite(auxAttach4, LOW);
+    digitalWrite(auxAttach5, LOW);
+    digitalWrite(LT1, LOW);
+    digitalWrite(LT2, LOW);
+    digitalWrite(LT3, LOW);
+  }
 }
