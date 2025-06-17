@@ -46,9 +46,30 @@ jobs:
 
       - name: Build Dump
         run: pio run -e dump
+      - name: Build Excavator
+        run: pio run -e excavator
+      - name: Build Fork
+        run: pio run -e fork
+      - name: Build Semi
+        run: pio run -e semi
 
       - uses: actions/upload-artifact@v4
         with:
           name: dump-firmware
           path: .pio/build/dump/firmware.bin
+          include-hidden-files: true
+      - uses: actions/upload-artifact@v4
+        with:
+          name: excavator-firmware
+          path: .pio/build/excavator/firmware.bin
+          include-hidden-files: true
+      - uses: actions/upload-artifact@v4
+        with:
+          name: fork-firmware
+          path: .pio/build/fork/firmware.bin
+          include-hidden-files: true
+      - uses: actions/upload-artifact@v4
+        with:
+          name: semi-firmware
+          path: .pio/build/semi/firmware.bin
           include-hidden-files: true
