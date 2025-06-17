@@ -1,4 +1,18 @@
 {
   "projectName": "BOOTCAMP",
-  "projectOwner": "daltonpearson"
+  "projectOwner": "daltonpearson",
+  "contributors": [
+    {
+        "login": "daltonpearson",
+        "name": "Dalton Pearson",
+        "avatar_url": "https://avatars.githubusercontent.com/u/32880838?v=4",
+        "profile": "https://github.com/daltonpearson",
+        "contributions": [
+          "code",
+          "ideas",
+          "projectManagement",
+          "review"
+        ]
+    }
+  ]
 }
