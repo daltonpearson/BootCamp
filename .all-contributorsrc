@@ -21,8 +21,20 @@
         "projectManagement",
         "maintenance"
       ]
+    },
+    {
+      "login": "PaulHam211",
+      "name": "PaulHam211",
+      "avatar_url": "https://avatars.githubusercontent.com/u/7596825?v=4",
+      "profile": "https://github.com/PaulHam211",
+      "contributions": [
+        "code",
+        "doc",
+        "ideas"
+      ]
     }
   ],
   "contributorsPerLine": 7,
-  "linkToUsage": true
+  "linkToUsage": true,
+  "commitType": "docs"
 }
