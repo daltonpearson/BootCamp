@@ -22,3 +22,7 @@ jobs:
 
       - name: Build Base Station
         run: pio run -e base
+      - uses: actions/upload-artifact@v4
+        with:
+          name: base-firmware.bin
+          path: .pio\build\base\firmware.bin
