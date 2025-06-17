@@ -24,7 +24,7 @@ jobs:
         run: pio run -e base
       - uses: actions/upload-artifact@v4
         with:
-          name: firmware
+          name: base-firmware
           path: .pio/build/base/firmware.bin
           include-hidden-files: true
   build-vehicles:
@@ -73,6 +73,15 @@ jobs:
           name: semi-firmware
           path: .pio/build/semi/firmware.bin
           include-hidden-files: true
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: base-firmware
+          path: .pio/build/base/firmware.bin
+
+      - name: Display structure of downloaded files
+        run: ls -R .pio/build/base/
+
       - uses: actions/upload-artifact@v4
         with:
           name: vehicle-firmware
@@ -81,4 +90,5 @@ jobs:
             .pio/build/excavator/firmware.bin
             .pio/build/fork/firmware.bin
             .pio/build/semi/firmware.bin
+            .pio/build/base/firmware.bin
           include-hidden-files: true
