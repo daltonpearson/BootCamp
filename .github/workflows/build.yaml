@@ -3,7 +3,7 @@ name: PlatformIO CI
 on: [push]
 
 jobs:
-  build:
+  build-base:
     runs-on: ubuntu-latest
 
     steps:
@@ -24,6 +24,52 @@ jobs:
         run: pio run -e base
       - uses: actions/upload-artifact@v4
         with:
-          name: base-firmware.bin
+          name: firmware
           path: .pio/build/base/firmware.bin
+          include-hidden-files: true
+  build-vehicles:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/pip
+            ~/.platformio/.cache
+          key: ${{ runner.os }}-pio
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install PlatformIO Core
+        run: pip install --upgrade platformio & echo $PWD & ls -lah
+
+      - name: Build Dump
+        run: pio run -e dump
+      - name: Build Excavator
+        run: pio run -e excavator
+      - name: Build Fork
+        run: pio run -e fork
+      - name: Build Semi
+        run: pio run -e semi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dump-firmware
+          path: .pio/build/dump/firmware.bin
+          include-hidden-files: true
+      - uses: actions/upload-artifact@v4
+        with:
+          name: excavator-firmware
+          path: .pio/build/excavator/firmware.bin
+          include-hidden-files: true
+      - uses: actions/upload-artifact@v4
+        with:
+          name: fork-firmware
+          path: .pio/build/fork/firmware.bin
+          include-hidden-files: true
+      - uses: actions/upload-artifact@v4
+        with:
+          name: semi-firmware
+          path: .pio/build/semi/firmware.bin
           include-hidden-files: true
