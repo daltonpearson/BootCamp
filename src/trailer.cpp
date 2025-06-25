@@ -37,8 +37,14 @@ Servo trailerRampServo;
 #define LT2 27
 #define LT3 14
 
-int trailerLegValue = 10;
-int trailerRampValue = 10;
+// Define servo position constants
+#define RAMP_UP_POSITION 30    // Ramp closed/up position value
+#define RAMP_DOWN_POSITION 180   // Ramp open/down position value
+#define LEGS_UP_POSITION 175    // Legs up position value
+#define LEGS_DOWN_POSITION 10   // Legs down position value
+
+int trailerLegValue = LEGS_DOWN_POSITION;
+int trailerRampValue = RAMP_UP_POSITION;
 bool lightsOn = false;
 bool auxLightsOn = false;
 
@@ -51,7 +57,7 @@ void setup() {
   trailerRampServo.write(trailerRampValue);
   delay(500);
   trailerLegServo.attach(trailerLegServoPin);
-  trailerLegServo.write(140);
+  trailerLegServo.write(140); // Intermediate position to avoid strain
   delay(50);
   trailerLegServo.write(trailerLegValue);
 
@@ -85,26 +91,26 @@ void loop() {
     Serial.print("Received: ");
     Serial.println(mtr);
     if (mtr == 1) {
-      if (trailerLegValue <= 175) {
-        trailerLegValue = trailerLegValue + 4;
-        trailerLegServo.write(trailerLegValue);
-      }
+      // Legs Up - Go directly to up position
+      trailerLegValue = LEGS_UP_POSITION;
+      trailerLegServo.write(trailerLegValue);
+      Serial.println("Legs moved to UP position");
     } else if (mtr == 2) {
-      if (trailerLegValue >= 5) {
-        trailerLegValue = trailerLegValue - 4;
-        trailerLegServo.write(trailerLegValue);
-      }
+      // Legs Down - Go directly to down position
+      trailerLegValue = LEGS_DOWN_POSITION;
+      trailerLegServo.write(trailerLegValue);
+      Serial.println("Legs moved to DOWN position");
     }
     if (mtr == 3) {
-      if (trailerRampValue <= 150) {
-        trailerRampValue = trailerRampValue + 4;
-        trailerRampServo.write(trailerRampValue);
-      }
+      // Ramp Up - Go directly to up position
+      trailerRampValue = RAMP_UP_POSITION;
+      trailerRampServo.write(trailerRampValue);
+      Serial.println("Ramp moved to UP position");
     } else if (mtr == 4) {
-      if (trailerRampValue >= 5) {
-        trailerRampValue = trailerRampValue - 4;
-        trailerRampServo.write(trailerRampValue);
-      }
+      // Ramp Down - Go directly to down position
+      trailerRampValue = RAMP_DOWN_POSITION;
+      trailerRampServo.write(trailerRampValue);
+      Serial.println("Ramp moved to DOWN position");
     }
     if (mtr == 5) {
       digitalWrite(auxMotor1, LOW);
