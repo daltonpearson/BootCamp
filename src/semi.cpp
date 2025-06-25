@@ -77,8 +77,11 @@ void flashConnectionIndicator();
 
 int lightSwitchButtonTime = 0;
 int lightSwitchTime = 0;
+int hitchButtonTime = 0;
+const int hitchDebounceDelay = 500; // Debounce delay in milliseconds
 int adjustedSteeringValue = 90;
-int hitchServoValue = 155;
+int hitchServoValueEngaged = 155;
+int hitchServoValueDisengaged = 100;
 int steeringTrim = 0;
 int lightMode = 0;
 bool lightsOn = false;
@@ -202,12 +205,21 @@ void processTrimAndHitch(int dpadValue) {
     steeringTrim = steeringTrim - 1;
     delay(50);
   }
-  if (dpadValue == 1) {
-    hitchServo.write(hitchServoValue);
+  
+  // Hitch toggle with debounce - only process if sufficient time has passed since last button press
+  if (dpadValue == 2 && (millis() - hitchButtonTime > hitchDebounceDelay)) {
+    // Toggle the hitch state
+    if (hitchUp) {
+      hitchServo.write(hitchServoValueDisengaged);
+      hitchUp = false;
+    } else {
+      hitchServo.write(hitchServoValueEngaged);
+      hitchUp = true;
+    }
     delay(10);
-  } else if (dpadValue == 2) {
-    hitchServo.write(100);
-    delay(10);
+    
+    // Update the last button press time
+    hitchButtonTime = millis();
   }
 }
 void processSteering(int axisRXValue) {
@@ -441,7 +453,8 @@ void setup() {
   frontSteeringServo.attach(frontSteeringServoPin);
   frontSteeringServo.write(adjustedSteeringValue);
   hitchServo.attach(hitchServoPin);
-  hitchServo.write(hitchServoValue);
+  hitchServo.write(hitchServoValueDisengaged); // Set to disengaged position on boot
+  hitchUp = false; // Initialize hitchUp to match the actual servo position
 
     WiFi.setSleep(false);
   WiFi.mode(WIFI_STA);
