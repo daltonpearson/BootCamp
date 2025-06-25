@@ -21,10 +21,10 @@ bool connectionActive = false; // Tracks if connection is currently active
 unsigned long lastPacketTime = 0; // Timestamp of last received packet
 const unsigned long CONNECTION_TIMEOUT = 3000; // 3 seconds timeout for connection
 struct_message receivedData;
-uint16_t buttonMaskY = 8;
-uint16_t buttonMaskA = 1;
-uint16_t buttonMaskB = 2;
-uint16_t buttonMaskX = 4;
+uint16_t buttonMaskY = 8;      // Triangle on PS4
+uint16_t buttonMaskA = 1;      // Cross on PS4
+uint16_t buttonMaskB = 2;      // Circle on PS4
+uint16_t buttonMaskX = 4;      // Square on PS4
 // ControllerPtr myControllers[BP32_MAX_GAMEPADS];
 
 /*What the different Serial commands for the trailer esp32 daughter board do
@@ -96,6 +96,9 @@ bool trailerAuxMtr1Reverse = false;
 bool trailerAuxMtr2Forward = false;
 bool trailerAuxMtr2Reverse = false;
 bool hitchUp = true;
+bool reducedSpeedMode = false;
+unsigned long speedModeButtonTime = 0;
+const int speedModeDebounceDelay = 500; // Debounce delay for speed mode toggle
 
 // Callback function for received data
 void OnDataRecv(const uint8_t * mac, const uint8_t *incomingData, int len) {
@@ -189,9 +192,26 @@ void processTrailerRampDown(int value) {
   }
 }
 
+void processSpeedMode(int value) {
+  // Triangle button toggles reduced speed mode with debouncing
+  if ((value & buttonMaskY) && (millis() - speedModeButtonTime > speedModeDebounceDelay)) {
+    reducedSpeedMode = !reducedSpeedMode; // Toggle the speed mode
+    Serial.print("Speed Mode: ");
+    Serial.println(reducedSpeedMode ? "Reduced (50%)" : "Normal (100%)");
+    speedModeButtonTime = millis();
+  }
+}
+
 void processThrottle(int axisYValue) {
   int adjustedThrottleValue = axisYValue / 2;
+  
+  // Apply 50% speed reduction if reduced speed mode is enabled
+  if (reducedSpeedMode) {
+    adjustedThrottleValue = adjustedThrottleValue / 2; // Further reduce to 50%
+  }
+  
   int smokeThrottle = adjustedThrottleValue / 3;
+  
   moveMotor(rearMotor0, rearMotor1, adjustedThrottleValue);
   moveMotor(rearMotor2, rearMotor3, adjustedThrottleValue);
   moveMotor(frontMotor0, frontMotor1, adjustedThrottleValue);
@@ -342,7 +362,9 @@ void processGamepad() {
   //Lights
   processLights(receivedData.thumbR);
   processSmokeGen(receivedData.thumbL);
-
+  
+  // Process speed mode toggle (Triangle button)
+  processSpeedMode(receivedData.buttons);
 
   processTrailerLegsUp(receivedData.buttons);
   processTrailerLegsDown(receivedData.buttons);
