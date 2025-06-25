@@ -1,4 +1,7 @@
 # BootCamp - RC Vehicle Control System
+<!-- ALL-CONTRIBUTORS-BADGE:START - Do not remove or modify this section -->
+[![All Contributors](https://img.shields.io/badge/all_contributors-2-orange.svg?style=flat-square)](#contributors-)
+<!-- ALL-CONTRIBUTORS-BADGE:END -->
 
 **BootCamp** is a wireless remote control system for multiple RC vehicles using ESP32 microcontrollers with ESP-NOW communication protocol. The system supports controlling different vehicle types (excavator, dump truck, semi-trailer, and forklift) from a single base station controller.
 
@@ -17,7 +20,7 @@ BootCamp/
 ├── src/
 │   ├── base.cpp        # Base station (controller receiver & ESP-NOW transmitter)
 │   ├── excavator.cpp   # Excavator vehicle controller
-│   ├── dump.cpp        # Dump truck vehicle controller  
+│   ├── dump.cpp        # Dump truck vehicle controller
 │   ├── semi.cpp        # Semi-trailer vehicle controller
 │   ├── fork.cpp        # Forklift vehicle controller
 ├── platformio.ini      # Build configurations for each vehicle
@@ -34,7 +37,7 @@ BootCamp is designed for RC vehicles created by **ProfessorBoots**. For detailed
 
 ### Supported Vehicles:
 - 🚜 **Excavator** (Receiver Index: 1)
-- 🏗️ **Forklift** (Receiver Index: 2)  
+- 🏗️ **Forklift** (Receiver Index: 2)
 - 🚛 **Dump Truck** (Receiver Index: 3)
 - 🚚 **Semi-Trailer** (Receiver Index: 4)
 
@@ -51,7 +54,7 @@ Each vehicle features realistic movement controls, working lights, and specializ
 - Bluetooth controller (Xbox or PS4/DualShock)
 
 ### Each Vehicle
-- ESP32 Development Board  
+- ESP32 Development Board
 - Vehicle-specific components as designed by ProfessorBoots
 - Motor drivers, servo motors, sensors (per vehicle design)
 - Power supply system
@@ -78,12 +81,12 @@ Each vehicle features realistic movement controls, working lights, and specializ
    Edit `src/base.cpp` and select your controller:
    ```cpp
    // For Xbox controllers:
-   #define CONTROLLER_XBOX     
-   // #define CONTROLLER_PS4   
-   
+   #define CONTROLLER_XBOX
+   // #define CONTROLLER_PS4
+
    // For PS4 controllers:
-   // #define CONTROLLER_XBOX     
-   #define CONTROLLER_PS4   
+   // #define CONTROLLER_XBOX
+   #define CONTROLLER_PS4
    ```
 
 3. **Important: Uninstall espressif32 package before building base:**
@@ -100,13 +103,13 @@ Each vehicle features realistic movement controls, working lights, and specializ
    ```bash
    # For excavator:
    pio run -e excavator --target upload
-   
+
    # For dump truck:
    pio run -e dump --target upload
-   
+
    # For semi-trailer:
    pio run -e semi --target upload
-   
+
    # For forklift:
    pio run -e fork --target upload
    ```
@@ -141,7 +144,7 @@ typedef struct {
     uint16_t buttons;          // Button state bitmask
     uint8_t dpad;             // D-pad state
     int32_t axisX, axisY;     // Left stick values
-    int32_t axisRX, axisRY;   // Right stick values  
+    int32_t axisRX, axisRY;   // Right stick values
     uint32_t brake, throttle; // Trigger values
     uint16_t miscButtons;     // Misc button bitmask
     bool thumbR, thumbL;      // Thumb button states
@@ -152,7 +155,7 @@ typedef struct {
 ### Receiver Indices
 - **0**: No vehicle selected
 - **1**: Excavator
-- **2**: Forklift  
+- **2**: Forklift
 - **3**: Dump Truck
 - **4**: Semi-Trailer
 - **5**: Crane *(Coming Soon)*
@@ -206,7 +209,7 @@ The base station outputs:
    board = esp32doit-devkit-v1
    framework = arduino
    build_src_filter = +<newvehicle.cpp>
-   lib_deps = 
+   lib_deps =
      madhephaestus/ESP32Servo @ 3.0.6
    ```
 3. **Implement ESP-NOW receiver** following existing patterns
@@ -230,7 +233,7 @@ The original project used Arduino `.ino` files with direct Bluetooth controller 
 
 **Common ESP32 Pins:**
 - Motor control: Various GPIO pins (vehicle-specific)
-- Servo control: PWM-capable pins  
+- Servo control: PWM-capable pins
 - I2C (if used): GPIO 21 (SDA), GPIO 22 (SCL)
 - Status LED: GPIO 2 (built-in)
 
@@ -239,7 +242,7 @@ The original project used Arduino `.ino` files with direct Bluetooth controller 
 ## Safety Considerations
 
 - **Always test in safe environment** before full operation
-- **Ensure emergency stop capability** 
+- **Ensure emergency stop capability**
 - **Check battery levels** before operation
 - **Verify control response** after any changes
 - **Maintain clear line of sight** for ESP-NOW communication
@@ -270,3 +273,36 @@ For issues and questions:
 ---
 
 *BootCamp demonstrates advanced ESP32 capabilities including wireless communication, multi-device coordination, and real-time control systems for ProfessorBoots' RC vehicle designs.*
+
+## Contributors ✨
+
+Thanks go to these wonderful people ([emoji key](https://allcontributors.org/docs/en/emoji-key)):
+<!-- ALL-CONTRIBUTORS-LIST:START - Do not remove or modify this section -->
+<!-- prettier-ignore-start -->
+<!-- markdownlint-disable -->
+<table>
+  <tbody>
+    <tr>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/daltonpearson"><img src="https://avatars.githubusercontent.com/u/32880838?v=4?s=100" width="100px;" alt="Dalton Pearson"/><br /><sub><b>Dalton Pearson</b></sub></a><br /><a href="https://github.com/daltonpearson/BootCamp/commits?author=daltonpearson" title="Code">💻</a> <a href="#ideas-daltonpearson" title="Ideas, Planning, & Feedback">🤔</a> <a href="#projectManagement-daltonpearson" title="Project Management">📆</a> <a href="#maintenance-daltonpearson" title="Maintenance">🚧</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/PaulHam211"><img src="https://avatars.githubusercontent.com/u/7596825?v=4?s=100" width="100px;" alt="PaulHam211"/><br /><sub><b>PaulHam211</b></sub></a><br /><a href="https://github.com/daltonpearson/BootCamp/commits?author=PaulHam211" title="Code">💻</a> <a href="https://github.com/daltonpearson/BootCamp/commits?author=PaulHam211" title="Documentation">📖</a> <a href="#ideas-PaulHam211" title="Ideas, Planning, & Feedback">🤔</a></td>
+    </tr>
+  </tbody>
+  <tfoot>
+    <tr>
+      <td align="center" size="13px" colspan="7">
+        <img src="https://raw.githubusercontent.com/all-contributors/all-contributors-cli/1b8533af435da9854653492b1327a23a4dbd0a10/assets/logo-small.svg">
+          <a href="https://all-contributors.js.org/docs/en/bot/usage">Add your contributions</a>
+        </img>
+      </td>
+    </tr>
+  </tfoot>
+</table>
+
+<!-- markdownlint-restore -->
+<!-- prettier-ignore-end -->
+
+<!-- ALL-CONTRIBUTORS-LIST:END -->
+
+
+This project follows the [all-contributors](https://allcontributors.org) specification.
+Contributions of any kind are welcome!
