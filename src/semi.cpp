@@ -80,6 +80,7 @@ int lightSwitchTime = 0;
 int hitchButtonTime = 0;
 const int hitchDebounceDelay = 500; // Debounce delay in milliseconds
 int adjustedSteeringValue = 90;
+int rawSteeringValue = 90; // Raw steering value from controller before trim
 int hitchServoValueEngaged = 155;
 int hitchServoValueDisengaged = 100;
 int steeringTrim = 0;
@@ -223,7 +224,8 @@ void processTrimAndHitch(int dpadValue) {
   }
 }
 void processSteering(int axisRXValue) {
-  adjustedSteeringValue = (90 - (axisRXValue / 9)) - steeringTrim;
+  rawSteeringValue = 90 - (axisRXValue / 9); // Store raw steering value without trim
+  adjustedSteeringValue = rawSteeringValue - steeringTrim; // Apply trim for actual steering
   frontSteeringServo.write(180 - adjustedSteeringValue);
 
   Serial.print("Steering Value:");
@@ -354,22 +356,22 @@ void processGamepad() {
 
   if (blinkLT && (millis() - lightSwitchTime) > 300) {
     if (!lightsOn) {
-      if (adjustedSteeringValue <= 85) {
+      if (rawSteeringValue <= 85) {
         digitalWrite(LT1, HIGH);
         Serial.println(12);
-      } else if (adjustedSteeringValue >= 95) {
+      } else if (rawSteeringValue >= 95) {
         digitalWrite(LT2, HIGH);
         Serial.println(14);
       }
       lightsOn = true;
     } else {
-      if (adjustedSteeringValue <= 85) {
+      if (rawSteeringValue <= 85) {
         digitalWrite(LT2, HIGH);
         digitalWrite(LT1, LOW);
         Serial.println(11);
         delay(10);
         Serial.println(14);
-      } else if (adjustedSteeringValue >= 95) {
+      } else if (rawSteeringValue >= 95) {
         digitalWrite(LT1, HIGH);
         digitalWrite(LT2, LOW);
         Serial.println(13);
@@ -380,7 +382,7 @@ void processGamepad() {
     }
     lightSwitchTime = millis();
   }
-  if (blinkLT && adjustedSteeringValue > 85 && adjustedSteeringValue < 95) {
+  if (blinkLT && rawSteeringValue > 85 && rawSteeringValue < 95) {
     digitalWrite(LT1, HIGH);
     digitalWrite(LT2, HIGH);
     Serial.println(12);
