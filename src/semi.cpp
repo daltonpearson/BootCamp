@@ -96,9 +96,15 @@ bool trailerAuxMtr1Reverse = false;
 bool trailerAuxMtr2Forward = false;
 bool trailerAuxMtr2Reverse = false;
 bool hitchUp = true;
+bool trailerRampUp = true;
+bool trailerLegsUp = true;
 bool reducedSpeedMode = false;
 unsigned long speedModeButtonTime = 0;
+unsigned long rampButtonTime = 0;
+unsigned long legsButtonTime = 0;
 const int speedModeDebounceDelay = 500; // Debounce delay for speed mode toggle
+const int rampDebounceDelay = 500; // Debounce delay for ramp toggle
+const int legsDebounceDelay = 500; // Debounce delay for legs toggle
 
 // Callback function for received data
 void OnDataRecv(const uint8_t * mac, const uint8_t *incomingData, int len) {
@@ -167,28 +173,42 @@ void moveServo(int movement, Servo &servo, int &servoValue) {
 }
 
 
-void processTrailerLegsUp(int value) {
-  if (value & buttonMaskY) {
-    Serial.println(1);
+void processTrailerLegs(int value) {
+  // Use Cross button (buttonMaskA) for toggling the trailer legs position
+  if ((value & buttonMaskA) && (millis() - legsButtonTime > legsDebounceDelay)) {
+    // Toggle the legs position
+    if (trailerLegsUp) {
+      Serial.println(2); // Legs Down
+      Serial.println("Trailer Legs: Down");
+      trailerLegsUp = false;
+    } else {
+      Serial.println(1); // Legs Up
+      Serial.println("Trailer Legs: Up");
+      trailerLegsUp = true;
+    }
     delay(10);
+    
+    // Update the last button press time
+    legsButtonTime = millis();
   }
 }
-void processTrailerLegsDown(int value) {
-  if (value & buttonMaskA) {
-    Serial.println(2);
+void processTrailerRamp(int value) {
+  // Use Circle button (buttonMaskB) for toggling the ramp position
+  if ((value & buttonMaskB) && (millis() - rampButtonTime > rampDebounceDelay)) {
+    // Toggle the ramp position
+    if (trailerRampUp) {
+      Serial.println(4); // Ramp Down
+      Serial.println("Ramp: Down");
+      trailerRampUp = false;
+    } else {
+      Serial.println(3); // Ramp Up
+      Serial.println("Ramp: Up");
+      trailerRampUp = true;
+    }
     delay(10);
-  }
-}
-void processTrailerRampUp(int value) {
-  if (value & buttonMaskB) {
-    Serial.println(3);
-    delay(10);
-  }
-}
-void processTrailerRampDown(int value) {
-  if (value & buttonMaskX) {
-    Serial.println(4);
-    delay(10);
+    
+    // Update the last button press time
+    rampButtonTime = millis();
   }
 }
 
@@ -366,10 +386,8 @@ void processGamepad() {
   // Process speed mode toggle (Triangle button)
   processSpeedMode(receivedData.buttons);
 
-  processTrailerLegsUp(receivedData.buttons);
-  processTrailerLegsDown(receivedData.buttons);
-  processTrailerRampUp(receivedData.buttons);
-  processTrailerRampDown(receivedData.buttons);
+  processTrailerLegs(receivedData.buttons);
+  processTrailerRamp(receivedData.buttons);
 
   processTrailerAuxMtr1Forward(receivedData.r1);
   processTrailerAuxMtr1Reverse(receivedData.r2);
@@ -479,6 +497,8 @@ void setup() {
   hitchServo.attach(hitchServoPin);
   hitchServo.write(hitchServoValueDisengaged); // Set to disengaged position on boot
   hitchUp = false; // Initialize hitchUp to match the actual servo position
+  trailerRampUp = true; // Initialize ramp to up position by default
+  trailerLegsUp = true; // Initialize legs to up position by default
 
     WiFi.setSleep(false);
   WiFi.mode(WIFI_STA);
