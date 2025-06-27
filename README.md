@@ -107,8 +107,11 @@ Each vehicle features realistic movement controls, working lights, and specializ
    # For dump truck:
    pio run -e dump --target upload
 
-   # For semi-trailer:
+   # For semi:
    pio run -e semi --target upload
+
+   # For semi-trailer:
+   pio run -e trailer --target upload
 
    # For forklift:
    pio run -e fork --target upload
