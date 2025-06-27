@@ -21,10 +21,10 @@ bool connectionActive = false; // Tracks if connection is currently active
 unsigned long lastPacketTime = 0; // Timestamp of last received packet
 const unsigned long CONNECTION_TIMEOUT = 3000; // 3 seconds timeout for connection
 struct_message receivedData;
-uint16_t buttonMaskY = 8;
-uint16_t buttonMaskA = 1;
-uint16_t buttonMaskB = 2;
-uint16_t buttonMaskX = 4;
+uint16_t buttonMaskY = 8;      // Triangle on PS4
+uint16_t buttonMaskA = 1;      // Cross on PS4
+uint16_t buttonMaskB = 2;      // Circle on PS4
+uint16_t buttonMaskX = 4;      // Square on PS4
 // ControllerPtr myControllers[BP32_MAX_GAMEPADS];
 
 /*What the different Serial commands for the trailer esp32 daughter board do
@@ -77,8 +77,12 @@ void flashConnectionIndicator();
 
 int lightSwitchButtonTime = 0;
 int lightSwitchTime = 0;
+int hitchButtonTime = 0;
+const int hitchDebounceDelay = 500; // Debounce delay in milliseconds
 int adjustedSteeringValue = 90;
-int hitchServoValue = 155;
+int rawSteeringValue = 90; // Raw steering value from controller before trim
+int hitchServoValueEngaged = 155;
+int hitchServoValueDisengaged = 100;
 int steeringTrim = 0;
 int lightMode = 0;
 bool lightsOn = false;
@@ -92,6 +96,15 @@ bool trailerAuxMtr1Reverse = false;
 bool trailerAuxMtr2Forward = false;
 bool trailerAuxMtr2Reverse = false;
 bool hitchUp = true;
+bool trailerRampUp = true;
+bool trailerLegsUp = true;
+bool reducedSpeedMode = false;
+unsigned long speedModeButtonTime = 0;
+unsigned long rampButtonTime = 0;
+unsigned long legsButtonTime = 0;
+const int speedModeDebounceDelay = 500; // Debounce delay for speed mode toggle
+const int rampDebounceDelay = 500; // Debounce delay for ramp toggle
+const int legsDebounceDelay = 500; // Debounce delay for legs toggle
 
 // Callback function for received data
 void OnDataRecv(const uint8_t * mac, const uint8_t *incomingData, int len) {
@@ -160,34 +173,65 @@ void moveServo(int movement, Servo &servo, int &servoValue) {
 }
 
 
-void processTrailerLegsUp(int value) {
-  if (value & buttonMaskY) {
-    Serial.println(1);
+void processTrailerLegs(int value) {
+  // Use Cross button (buttonMaskA) for toggling the trailer legs position
+  if ((value & buttonMaskA) && (millis() - legsButtonTime > legsDebounceDelay)) {
+    // Toggle the legs position
+    if (trailerLegsUp) {
+      Serial.println(2); // Legs Down
+      Serial.println("Trailer Legs: Down");
+      trailerLegsUp = false;
+    } else {
+      Serial.println(1); // Legs Up
+      Serial.println("Trailer Legs: Up");
+      trailerLegsUp = true;
+    }
     delay(10);
+    
+    // Update the last button press time
+    legsButtonTime = millis();
   }
 }
-void processTrailerLegsDown(int value) {
-  if (value & buttonMaskA) {
-    Serial.println(2);
+void processTrailerRamp(int value) {
+  // Use Circle button (buttonMaskB) for toggling the ramp position
+  if ((value & buttonMaskB) && (millis() - rampButtonTime > rampDebounceDelay)) {
+    // Toggle the ramp position
+    if (trailerRampUp) {
+      Serial.println(4); // Ramp Down
+      Serial.println("Ramp: Down");
+      trailerRampUp = false;
+    } else {
+      Serial.println(3); // Ramp Up
+      Serial.println("Ramp: Up");
+      trailerRampUp = true;
+    }
     delay(10);
+    
+    // Update the last button press time
+    rampButtonTime = millis();
   }
 }
-void processTrailerRampUp(int value) {
-  if (value & buttonMaskB) {
-    Serial.println(3);
-    delay(10);
-  }
-}
-void processTrailerRampDown(int value) {
-  if (value & buttonMaskX) {
-    Serial.println(4);
-    delay(10);
+
+void processSpeedMode(int value) {
+  // Triangle button toggles reduced speed mode with debouncing
+  if ((value & buttonMaskY) && (millis() - speedModeButtonTime > speedModeDebounceDelay)) {
+    reducedSpeedMode = !reducedSpeedMode; // Toggle the speed mode
+    Serial.print("Speed Mode: ");
+    Serial.println(reducedSpeedMode ? "Reduced (50%)" : "Normal (100%)");
+    speedModeButtonTime = millis();
   }
 }
 
 void processThrottle(int axisYValue) {
   int adjustedThrottleValue = axisYValue / 2;
+  
+  // Apply 50% speed reduction if reduced speed mode is enabled
+  if (reducedSpeedMode) {
+    adjustedThrottleValue = adjustedThrottleValue / 2; // Further reduce to 50%
+  }
+  
   int smokeThrottle = adjustedThrottleValue / 3;
+  
   moveMotor(rearMotor0, rearMotor1, adjustedThrottleValue);
   moveMotor(rearMotor2, rearMotor3, adjustedThrottleValue);
   moveMotor(frontMotor0, frontMotor1, adjustedThrottleValue);
@@ -202,16 +246,26 @@ void processTrimAndHitch(int dpadValue) {
     steeringTrim = steeringTrim - 1;
     delay(50);
   }
-  if (dpadValue == 1) {
-    hitchServo.write(hitchServoValue);
+  
+  // Hitch toggle with debounce - only process if sufficient time has passed since last button press
+  if (dpadValue == 2 && (millis() - hitchButtonTime > hitchDebounceDelay)) {
+    // Toggle the hitch state
+    if (hitchUp) {
+      hitchServo.write(hitchServoValueDisengaged);
+      hitchUp = false;
+    } else {
+      hitchServo.write(hitchServoValueEngaged);
+      hitchUp = true;
+    }
     delay(10);
-  } else if (dpadValue == 2) {
-    hitchServo.write(100);
-    delay(10);
+    
+    // Update the last button press time
+    hitchButtonTime = millis();
   }
 }
 void processSteering(int axisRXValue) {
-  adjustedSteeringValue = (90 - (axisRXValue / 9)) - steeringTrim;
+  rawSteeringValue = 90 - (axisRXValue / 9); // Store raw steering value without trim
+  adjustedSteeringValue = rawSteeringValue - steeringTrim; // Apply trim for actual steering
   frontSteeringServo.write(180 - adjustedSteeringValue);
 
   Serial.print("Steering Value:");
@@ -328,12 +382,12 @@ void processGamepad() {
   //Lights
   processLights(receivedData.thumbR);
   processSmokeGen(receivedData.thumbL);
+  
+  // Process speed mode toggle (Triangle button)
+  processSpeedMode(receivedData.buttons);
 
-
-  processTrailerLegsUp(receivedData.buttons);
-  processTrailerLegsDown(receivedData.buttons);
-  processTrailerRampUp(receivedData.buttons);
-  processTrailerRampDown(receivedData.buttons);
+  processTrailerLegs(receivedData.buttons);
+  processTrailerRamp(receivedData.buttons);
 
   processTrailerAuxMtr1Forward(receivedData.r1);
   processTrailerAuxMtr1Reverse(receivedData.r2);
@@ -342,22 +396,22 @@ void processGamepad() {
 
   if (blinkLT && (millis() - lightSwitchTime) > 300) {
     if (!lightsOn) {
-      if (adjustedSteeringValue <= 85) {
+      if (rawSteeringValue <= 85) {
         digitalWrite(LT1, HIGH);
         Serial.println(12);
-      } else if (adjustedSteeringValue >= 95) {
+      } else if (rawSteeringValue >= 95) {
         digitalWrite(LT2, HIGH);
         Serial.println(14);
       }
       lightsOn = true;
     } else {
-      if (adjustedSteeringValue <= 85) {
+      if (rawSteeringValue <= 85) {
         digitalWrite(LT2, HIGH);
         digitalWrite(LT1, LOW);
         Serial.println(11);
         delay(10);
         Serial.println(14);
-      } else if (adjustedSteeringValue >= 95) {
+      } else if (rawSteeringValue >= 95) {
         digitalWrite(LT1, HIGH);
         digitalWrite(LT2, LOW);
         Serial.println(13);
@@ -368,7 +422,7 @@ void processGamepad() {
     }
     lightSwitchTime = millis();
   }
-  if (blinkLT && adjustedSteeringValue > 85 && adjustedSteeringValue < 95) {
+  if (blinkLT && rawSteeringValue > 85 && rawSteeringValue < 95) {
     digitalWrite(LT1, HIGH);
     digitalWrite(LT2, HIGH);
     Serial.println(12);
@@ -441,7 +495,10 @@ void setup() {
   frontSteeringServo.attach(frontSteeringServoPin);
   frontSteeringServo.write(adjustedSteeringValue);
   hitchServo.attach(hitchServoPin);
-  hitchServo.write(hitchServoValue);
+  hitchServo.write(hitchServoValueDisengaged); // Set to disengaged position on boot
+  hitchUp = false; // Initialize hitchUp to match the actual servo position
+  trailerRampUp = true; // Initialize ramp to up position by default
+  trailerLegsUp = true; // Initialize legs to up position by default
 
     WiFi.setSleep(false);
   WiFi.mode(WIFI_STA);
