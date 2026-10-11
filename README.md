@@ -154,6 +154,18 @@ can switch vehicles independently.
 > **Note:** Both controllers connect over Bluetooth and the commands go out over ESP-NOW. The
 > ESP32 shares a single radio between BT and WiFi/ESP-NOW, which the base firmware already handles.
 
+#### **Pairing (Important)**
+
+Pair each controller **one at a time, with the other controller powered OFF**. Bluepad32 can hold
+several already-paired controllers at once, but pairing a *second* new controller while another is
+connected is unreliable (you'll see `Failed to inquiry name` / `Unknown GAP connection type` in the
+serial monitor). Once both are paired, they reconnect normally - just press **PS** on each.
+
+- **To pair:** hold **Share + PS** until the light bar double-blinks, then release.
+- **To deselect:** press **PS**.
+- **Do not** call `BP32.forgetBluetoothKeys()` in the base firmware. It erases the stored keys and
+  forces re-pairing, which is exactly when the second controller fails to attach.
+
 ## Communication Protocol
 
 ### ESP-NOW Message Structure
