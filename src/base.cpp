@@ -49,15 +49,16 @@ const char* CONTROLLER_TYPE = "Xbox";
 #endif
 
 // PS4 controller button mappings
+// Bluepad32 misc bits: SYSTEM(PS)=0x01, SELECT(Share)=0x02, START(Options)=0x04
 #ifdef CONTROLLER_PS4
 const ButtonMapping controllerMapping = {
     .buttonA = 2,           // Cross (X) button - typically mapped to A
     .buttonB = 1,           // Circle (O) button - typically mapped to B  
     .buttonX = 4,           // Square button - typically mapped to X
     .buttonY = 8,           // Triangle button - typically mapped to Y
-    .miscForwardMask = 4, // Share button
-    .miscBackwardMask = 2,// Options button
-    .miscResetMask = 1   // PS button
+    .miscForwardMask = 2,   // Share (Select) - next vehicle
+    .miscBackwardMask = 4,  // Options (Start) - previous vehicle
+    .miscResetMask = 1      // PS (System) - reset to index 0
 };
 const char* CONTROLLER_TYPE = "PS4";
 #endif
@@ -88,6 +89,9 @@ struct ControllerState {
 };
 // Debounce timer per controller slot so two controllers don't block each other.
 int miscButtonTime[BP32_MAX_GAMEPADS] = {0};
+// Previous misc-button state per slot. Used to act on button presses (edges)
+// instead of a held level, so one press = one step and a sticky bit is harmless.
+uint16_t prevMiscButtons[BP32_MAX_GAMEPADS] = {0};
 
 struct CalibrationData {
     int32_t axisX, axisY, axisRX, axisRY;
@@ -169,26 +173,35 @@ void processGamepad(GamepadPtr gp, unsigned controllerIndex) {
 
 
         gamepadState->miscButtons = gp->miscButtons();
-        // Debounce is per controller slot so both controllers can switch
-        // vehicles independently without blocking each other.
-        if (gamepadState->miscButtons && (millis() - miscButtonTime[controllerIndex]) > 200) {
+        // Act on newly-pressed misc buttons (rising edge) rather than the held
+        // level: one press = one step, and a sticky bit can't spam us.
+        uint16_t pressed = gamepadState->miscButtons & ~prevMiscButtons[controllerIndex];
+        if (gamepadState->miscButtons != prevMiscButtons[controllerIndex]) {
+          Serial.printf("SLOT:%d misc=0x%02x\n", controllerIndex, gamepadState->miscButtons);
+        }
+        prevMiscButtons[controllerIndex] = gamepadState->miscButtons;
+
+        if (pressed && (millis() - miscButtonTime[controllerIndex]) > 200) {
           int32_t nextIndex = (int32_t)gamepadState->receiverIndex;
-          if (gamepadState->miscButtons & controllerMapping.miscForwardMask) {
+          if (pressed & controllerMapping.miscForwardMask) {
             nextIndex++;
-          } else if (gamepadState->miscButtons & controllerMapping.miscBackwardMask) {
+          } else if (pressed & controllerMapping.miscBackwardMask) {
             nextIndex--;
-          } else if (gamepadState->miscButtons & controllerMapping.miscResetMask) {
+          } else if (pressed & controllerMapping.miscResetMask) {
             nextIndex = 0;
           }
 
           // Clamp so the index wraps cleanly instead of overflowing the uint32.
           if (nextIndex < 0) nextIndex = MAX_RECEIVER_INDEX;
           if (nextIndex > MAX_RECEIVER_INDEX) nextIndex = 0;
-          gamepadState->receiverIndex = (uint32_t)nextIndex;
 
-          // Timestamp this deliberate selection so receivers can arbitrate which
-          // controller owns a vehicle if two of them pick the same index.
-          gamepadState->selectionTime = millis();
+          if ((uint32_t)nextIndex != gamepadState->receiverIndex) {
+            gamepadState->receiverIndex = (uint32_t)nextIndex;
+            // Timestamp this deliberate selection so receivers can arbitrate
+            // which controller owns a vehicle if two of them pick the same index.
+            gamepadState->selectionTime = millis();
+            Serial.printf("SLOT:%d selected vehicle index %d\n", controllerIndex, nextIndex);
+          }
 
           miscButtonTime[controllerIndex] = millis();
         }
