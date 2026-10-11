@@ -144,9 +144,11 @@ can switch vehicles independently.
 - Each controller gets its own **slot** and its own independent **receiver index**.
 - Use the misc buttons (Share = next, Options = previous, PS = reset) on **your** controller
   to pick a vehicle — you are not affecting the other controller.
-- If two controllers select the **same** vehicle, the controller that made the **most recent**
-  selection owns it. A controller already sitting on that index won't steal control; the other
-  driver must deliberately re-select (press a switch button) to take over.
+- A vehicle can only be held by **one controller at a time**. If a vehicle is already taken,
+  your switch press **skips past it** to the next free vehicle, so you can't accidentally steal
+  someone else's machine.
+- When a controller deselects (PS/reset), moves to another vehicle, or disconnects, its vehicle
+  is **released** and becomes available to the other controller again.
 - Watch the serial monitor: each packet prints `SLOT:n` so you can tell which controller is talking.
 
 > **Note:** Both controllers connect over Bluetooth and the commands go out over ESP-NOW. The

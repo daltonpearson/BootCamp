@@ -92,6 +92,9 @@ int miscButtonTime[BP32_MAX_GAMEPADS] = {0};
 // Previous misc-button state per slot. Used to act on button presses (edges)
 // instead of a held level, so one press = one step and a sticky bit is harmless.
 uint16_t prevMiscButtons[BP32_MAX_GAMEPADS] = {0};
+// Which controller slot owns each vehicle (index 0..MAX_RECEIVER_INDEX); -1 = free.
+// Index 0 = "no vehicle" and is always free.
+int vehicleOwner[MAX_RECEIVER_INDEX + 1] = {-1, -1, -1, -1, -1, -1, -1};
 
 struct CalibrationData {
     int32_t axisX, axisY, axisRX, axisRY;
@@ -134,6 +137,20 @@ void sendGamepad(ControllerState *gamepadState) {
   // dumpGamepadState(gamepadState);
   (void)result;
 }
+// Find the next selectable vehicle index starting from `start`, stepping by
+// `dir`, wrapping through 0..MAX_RECEIVER_INDEX. Index 0 (no vehicle) is always
+// allowed; otherwise a vehicle is only selectable if it is free or already ours.
+// Returns the index, or -1 if every vehicle is owned by someone else.
+int findFreeIndex(int start, int dir, int self) {
+  const int count = MAX_RECEIVER_INDEX + 1;
+  for (int step = 1; step <= count; step++) {
+    int idx = ((start + dir * step) % count + count) % count;
+    if (idx == 0) return 0;
+    if (vehicleOwner[idx] == -1 || vehicleOwner[idx] == self) return idx;
+  }
+  return -1;
+}
+
 // Controller event callback
 void processGamepad(GamepadPtr gp, unsigned controllerIndex) {
     CalibrationData *calibrationData = &controllerCalibrations[controllerIndex];
@@ -182,25 +199,31 @@ void processGamepad(GamepadPtr gp, unsigned controllerIndex) {
         prevMiscButtons[controllerIndex] = gamepadState->miscButtons;
 
         if (pressed && (millis() - miscButtonTime[controllerIndex]) > 200) {
-          int32_t nextIndex = (int32_t)gamepadState->receiverIndex;
-          if (pressed & controllerMapping.miscForwardMask) {
-            nextIndex++;
+          int self = (int)controllerIndex;
+          int newIndex = (int)gamepadState->receiverIndex;
+
+          if (pressed & controllerMapping.miscResetMask) {
+            newIndex = 0; // PS: deselect
+          } else if (pressed & controllerMapping.miscForwardMask) {
+            newIndex = findFreeIndex((int)gamepadState->receiverIndex, +1, self);
           } else if (pressed & controllerMapping.miscBackwardMask) {
-            nextIndex--;
-          } else if (pressed & controllerMapping.miscResetMask) {
-            nextIndex = 0;
+            newIndex = findFreeIndex((int)gamepadState->receiverIndex, -1, self);
           }
 
-          // Clamp so the index wraps cleanly instead of overflowing the uint32.
-          if (nextIndex < 0) nextIndex = MAX_RECEIVER_INDEX;
-          if (nextIndex > MAX_RECEIVER_INDEX) nextIndex = 0;
+          if (newIndex < 0) {
+            // Every vehicle is taken by another controller.
+            Serial.printf("SLOT:%d no free vehicle to select\n", self);
+          } else if ((uint32_t)newIndex != gamepadState->receiverIndex) {
+            // Release the vehicle we currently own, then claim the new one.
+            int oldIndex = (int)gamepadState->receiverIndex;
+            if (oldIndex > 0 && vehicleOwner[oldIndex] == self) vehicleOwner[oldIndex] = -1;
+            if (newIndex > 0) vehicleOwner[newIndex] = self;
 
-          if ((uint32_t)nextIndex != gamepadState->receiverIndex) {
-            gamepadState->receiverIndex = (uint32_t)nextIndex;
-            // Timestamp this deliberate selection so receivers can arbitrate
-            // which controller owns a vehicle if two of them pick the same index.
+            gamepadState->receiverIndex = (uint32_t)newIndex;
+            // Timestamp this deliberate selection (receivers also use it as a
+            // safety net if two slots ever end up on the same index).
             gamepadState->selectionTime = millis();
-            Serial.printf("SLOT:%d selected vehicle index %d\n", controllerIndex, nextIndex);
+            Serial.printf("SLOT:%d selected vehicle index %d\n", self, newIndex);
           }
 
           miscButtonTime[controllerIndex] = millis();
@@ -235,6 +258,10 @@ void onDisconnectedController(ControllerPtr ctl) {
   for (int i = 0; i < BP32_MAX_GAMEPADS; i++) {
     if (myControllers[i] == ctl) {
       Serial.printf("CALLBACK: Controller disconnected from index=%d\n", i);
+      // Release any vehicle this controller owned so others can select it.
+      for (int v = 1; v <= MAX_RECEIVER_INDEX; v++) {
+        if (vehicleOwner[v] == i) vehicleOwner[v] = -1;
+      }
       myControllers[i] = nullptr;
       foundController = true;
       break;
