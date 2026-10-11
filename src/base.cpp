@@ -12,10 +12,10 @@
 // 3. Upload the code to your ESP32
 //
 // For Xbox/Xbox-style controllers (original configuration):
-#define CONTROLLER_XBOX     
+// #define CONTROLLER_XBOX     
 //
 // For PS4/DualShock 4 controllers:
-// #define CONTROLLER_PS4   
+#define CONTROLLER_PS4   
 //
 // The misc buttons are used to switch between receivers:
 // - Forward button: increment receiver index (next vehicle)
@@ -126,7 +126,9 @@ void dumpGamepadState(ControllerState *gamepadState) {
 }
 void sendGamepad(ControllerState *gamepadState) {
   esp_err_t result = esp_now_send(broadcastAddress, (uint8_t *)gamepadState, sizeof(*gamepadState));
-  dumpGamepadState(gamepadState);
+  // Uncomment the next line to print every outgoing packet (very noisy).
+  // dumpGamepadState(gamepadState);
+  (void)result;
 }
 // Controller event callback
 void processGamepad(GamepadPtr gp, unsigned controllerIndex) {
