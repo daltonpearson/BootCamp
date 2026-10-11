@@ -135,6 +135,23 @@ Use the misc buttons on your controller to switch between vehicles:
 - **Xbox**: Guide button area controls
 - **PS4**: Share/Options/PS button controls
 
+#### **Multiple Controllers (Two Operators)**
+
+The base station supports **up to 4 Bluetooth controllers at once** (Bluepad32 limit).
+This lets two people drive two different vehicles at the same time, and either operator
+can switch vehicles independently.
+
+- Each controller gets its own **slot** and its own independent **receiver index**.
+- Use the misc buttons (Share = next, Options = previous, PS = reset) on **your** controller
+  to pick a vehicle — you are not affecting the other controller.
+- If two controllers select the **same** vehicle, the controller that made the **most recent**
+  selection owns it. A controller already sitting on that index won't steal control; the other
+  driver must deliberately re-select (press a switch button) to take over.
+- Watch the serial monitor: each packet prints `SLOT:n` so you can tell which controller is talking.
+
+> **Note:** Both controllers connect over Bluetooth and the commands go out over ESP-NOW. The
+> ESP32 shares a single radio between BT and WiFi/ESP-NOW, which the base firmware already handles.
+
 ## Communication Protocol
 
 ### ESP-NOW Message Structure
@@ -149,6 +166,8 @@ typedef struct {
     uint16_t miscButtons;     // Misc button bitmask
     bool thumbR, thumbL;      // Thumb button states
     bool r1, l1, r2, l2;     // Shoulder button states
+    uint8_t controllerSlot;   // Which base controller slot sent this (0-3)
+    uint32_t selectionTime;   // millis() when this controller last changed vehicle
 } struct_message;
 ```
 

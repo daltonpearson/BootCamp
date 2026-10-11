@@ -13,12 +13,19 @@ typedef struct struct_message {
     uint32_t brake, throttle;
     uint16_t miscButtons;
     bool thumbR, thumbL, r1, l1, r2, l2;
+    uint8_t controllerSlot;   // Which base-station controller slot sent this packet
+    uint32_t selectionTime;   // millis() when that controller last changed vehicle
 } struct_message;
 bool dataUpdated;
 bool connectionActive = false; // Tracks if connection is currently active
 unsigned long lastPacketTime = 0; // Timestamp of last received packet
 const unsigned long CONNECTION_TIMEOUT = 3000; // 3 seconds timeout for connection
 struct_message receivedData;
+
+// Which base controller owns this vehicle (-1 = none) and the time of its last
+// deliberate selection. Keeps two controllers from fighting over one vehicle.
+int activeControllerSlot = -1;
+uint32_t activeSelectionTime = 0;
 // defines
 #define clawServoPin 5
 #define auxServoPin 18
@@ -94,7 +101,16 @@ void dumpGamepadState() {
 // Callback function for received data
 void OnDataRecv(const uint8_t * mac, const uint8_t *incomingData, int len) {
     struct_message tempReceivedData;
-    memcpy(&tempReceivedData, incomingData, sizeof(receivedData));    if (tempReceivedData.receiverIndex == thisReceiverIndex){
+    memcpy(&tempReceivedData, incomingData, sizeof(receivedData));
+
+    // Ownership filter: the current owner keeps control; another controller can
+    // take over only by making a newer, deliberate vehicle selection.
+    bool owned = (tempReceivedData.controllerSlot == activeControllerSlot);
+    bool newer = (tempReceivedData.selectionTime > activeSelectionTime);
+    if (tempReceivedData.receiverIndex == thisReceiverIndex &&
+        (activeControllerSlot == -1 || owned || newer)) {
+      activeControllerSlot = tempReceivedData.controllerSlot;
+      if (newer) activeSelectionTime = tempReceivedData.selectionTime;
       memcpy(&receivedData, &tempReceivedData, sizeof(receivedData));
       dataUpdated = true;
       

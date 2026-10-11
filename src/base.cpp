@@ -69,6 +69,9 @@ const char* CONTROLLER_TYPE = "PS4";
 
 // ============================================
 
+// Highest valid vehicle index (0 = no vehicle). Matches the README receiver indices.
+#define MAX_RECEIVER_INDEX 6
+
 ControllerPtr myControllers[BP32_MAX_GAMEPADS];
 // Structure to hold controller state
 struct ControllerState {
@@ -80,8 +83,11 @@ struct ControllerState {
     uint32_t brake, throttle;
     uint16_t miscButtons;
     bool thumbR, thumbL, r1, l1, r2, l2;
+    uint8_t controllerSlot;   // Which Bluetooth controller slot produced this state
+    uint32_t selectionTime;   // millis() when receiverIndex last changed (used for arbitration)
 };
-int miscButtonTime = 0;
+// Debounce timer per controller slot so two controllers don't block each other.
+int miscButtonTime[BP32_MAX_GAMEPADS] = {0};
 
 struct CalibrationData {
     int32_t axisX, axisY, axisRX, axisRY;
@@ -95,7 +101,7 @@ uint8_t broadcastAddress[] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
 bool dataSent = true;
 
 void dumpGamepadState(ControllerState *gamepadState) {
-    Serial.printf("ID:%d | BTN:0x%04x | DPAD:0x%02x | L:%d,%d | R:%d,%d | BT:%d TH:%d | MISC:0x%02x | FWD:%d BWD:%d RST:%d | R1:%d L1:%d R2:%d L2:%d | TL:%d TR:%d\n",
+    Serial.printf("ID:%d | BTN:0x%04x | DPAD:0x%02x | L:%d,%d | R:%d,%d | BT:%d TH:%d | MISC:0x%02x | FWD:%d BWD:%d RST:%d | R1:%d L1:%d R2:%d L2:%d | TL:%d TR:%d | SLOT:%d\n",
         gamepadState->receiverIndex,
         gamepadState->buttons,
         gamepadState->dpad,
@@ -114,7 +120,8 @@ void dumpGamepadState(ControllerState *gamepadState) {
         gamepadState->r2,
         gamepadState->l2,
         gamepadState->thumbL,
-        gamepadState->thumbR
+        gamepadState->thumbR,
+        gamepadState->controllerSlot
     );
 }
 void sendGamepad(ControllerState *gamepadState) {
@@ -142,6 +149,7 @@ void processGamepad(GamepadPtr gp, unsigned controllerIndex) {
     }
     if (gp) {
         ControllerState *gamepadState = &gamepadStates[controllerIndex];
+        gamepadState->controllerSlot = (uint8_t)controllerIndex;
         gamepadState->buttons = gp->buttons();
         gamepadState->dpad = gp->dpad();
         gamepadState->axisX = gp->axisX() - calibrationData->axisX;
@@ -159,16 +167,28 @@ void processGamepad(GamepadPtr gp, unsigned controllerIndex) {
 
 
         gamepadState->miscButtons = gp->miscButtons();
-        if (gamepadState->miscButtons && (millis() - miscButtonTime) > 200) {
+        // Debounce is per controller slot so both controllers can switch
+        // vehicles independently without blocking each other.
+        if (gamepadState->miscButtons && (millis() - miscButtonTime[controllerIndex]) > 200) {
+          int32_t nextIndex = (int32_t)gamepadState->receiverIndex;
           if (gamepadState->miscButtons & controllerMapping.miscForwardMask) {
-            gamepadState->receiverIndex++;
+            nextIndex++;
           } else if (gamepadState->miscButtons & controllerMapping.miscBackwardMask) {
-            gamepadState->receiverIndex--;
+            nextIndex--;
           } else if (gamepadState->miscButtons & controllerMapping.miscResetMask) {
-            gamepadState->receiverIndex = 0;
+            nextIndex = 0;
           }
 
-          miscButtonTime = millis();
+          // Clamp so the index wraps cleanly instead of overflowing the uint32.
+          if (nextIndex < 0) nextIndex = MAX_RECEIVER_INDEX;
+          if (nextIndex > MAX_RECEIVER_INDEX) nextIndex = 0;
+          gamepadState->receiverIndex = (uint32_t)nextIndex;
+
+          // Timestamp this deliberate selection so receivers can arbitrate which
+          // controller owns a vehicle if two of them pick the same index.
+          gamepadState->selectionTime = millis();
+
+          miscButtonTime[controllerIndex] = millis();
         }
         sendGamepad(gamepadState);
 
