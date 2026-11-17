@@ -153,6 +153,11 @@ void moveMotor(int motorPin0, int motorPin1, int velocity) {
   } else {
     analogWrite(motorPin0, 0);
     analogWrite(motorPin1, 0);
+    // Fully stopped: clear the ramp/dead-time state so the next move starts clean.
+    if (slot >= 0) {
+      dtLevel[slot] = 0;
+      dtCoast[slot] = false;
+    }
   }
 }
 
