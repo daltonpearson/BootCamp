@@ -15,13 +15,24 @@ typedef struct struct_message {
     uint32_t brake, throttle;
     uint16_t miscButtons;
     bool thumbR, thumbL, r1, l1, r2, l2;
+    uint8_t controllerSlot;   // Which base-station controller slot sent this packet
+    uint32_t selectionTime;   // millis() when that controller last changed vehicle
 } struct_message;
 
 bool dataUpdated;
 bool connectionActive = false; // Tracks if connection is currently active
 unsigned long lastPacketTime = 0; // Timestamp of last received packet
-const unsigned long CONNECTION_TIMEOUT = 3000; // 3 seconds timeout for connection
+// Failsafe window. The base heartbeats every 20ms, but ESP-NOW broadcast over a
+// radio shared with two Bluetooth links drops bursts, so allow several missed
+// heartbeats before cutting power. This is only a backstop: a real pad
+// disconnect is stopped immediately by the base's "neutral" packets.
+const unsigned long CONNECTION_TIMEOUT = 500; // ms without a packet = link lost
 struct_message receivedData;
+
+// Which base controller owns this vehicle (-1 = none) and the time of its last
+// deliberate selection. Keeps two controllers from fighting over one vehicle.
+int activeControllerSlot = -1;
+uint32_t activeSelectionTime = 0;
 
 // Forward declarations
 void processThrottle(int axisYValue);
@@ -33,12 +44,11 @@ void processMastTilt(int dpadValue);
 void processAux(bool buttonValue);
 void moveMotor(int motorPin0, int motorPin1, int velocity);
 void processControllers();
-void flashConnectionIndicator();
+void flashConnectionIndicator();       // start the (non-blocking) indicator
+void serviceConnectionIndicator();     // advance it; call every loop()
 
 #define steeringServoPin 23
 #define mastTiltServoPin 22
-#define cabLights 32
-#define auxLights 33
 
 #define mastMotor0 25  // Used for controlling auxiliary attachment movement
 #define mastMotor1 26  // Used for controlling auxiliary attachment movement
@@ -74,7 +84,15 @@ bool hardRight;
 void OnDataRecv(const uint8_t * mac, const uint8_t *incomingData, int len) {
     struct_message tempReceivedData;
     memcpy(&tempReceivedData, incomingData, sizeof(receivedData));
-    if (tempReceivedData.receiverIndex == thisReceiverIndex){
+
+    // Ownership filter: the current owner keeps control; another controller can
+    // take over only by making a newer, deliberate vehicle selection.
+    bool owned = (tempReceivedData.controllerSlot == activeControllerSlot);
+    bool newer = (tempReceivedData.selectionTime > activeSelectionTime);
+    if (tempReceivedData.receiverIndex == thisReceiverIndex &&
+        (activeControllerSlot == -1 || owned || newer)) {
+      activeControllerSlot = tempReceivedData.controllerSlot;
+      if (newer) activeSelectionTime = tempReceivedData.selectionTime;
       memcpy(&receivedData, &tempReceivedData, sizeof(receivedData));
       dataUpdated = true;
       
@@ -89,23 +107,33 @@ void OnDataRecv(const uint8_t * mac, const uint8_t *incomingData, int len) {
     }
 }
 
-// Function to move steering servo left and right as a connection indicator
+// Connection indicator - deliberately NON-BLOCKING (started from the ESP-NOW
+// receive callback; a delay() there would stall the WiFi task). Nudges the
+// steering servo left/right twice, then hands the servo back to real steering.
+bool indicatorRunning = false;
+uint8_t indicatorStep = 0;
+uint32_t indicatorStepTime = 0;
+int indicatorServoOffset = 0;   // steering twitch added while the indicator runs
+
 void flashConnectionIndicator() {
-  // Store original position
-  float originalPosition = adjustedSteeringValue;
-  
-  // Flash the steering servo left and right twice
-  for (int i = 0; i < 2; i++) {
-    // Turn left
-    steeringServo.write(120);
-    delay(150);
-    // Turn right
-    steeringServo.write(60);
-    delay(150);
+  indicatorRunning = true;
+  indicatorStep = 0;
+  indicatorStepTime = millis();
+}
+
+void serviceConnectionIndicator() {
+  if (!indicatorRunning) return;
+  if (millis() - indicatorStepTime < 150) return;
+  indicatorStepTime = millis();
+  if (indicatorStep >= 4) {            // two left/right swings done
+    indicatorRunning = false;
+    indicatorServoOffset = 0;
+    return;
   }
-  
-  // Return to original position
-  steeringServo.write(originalPosition);
+  // +/-30 deg swing either side of the real steering angle. Applied as an
+  // offset in processSteering() so the 50Hz steering updates don't stomp it.
+  indicatorServoOffset = (indicatorStep % 2) == 0 ? 30 : -30;
+  indicatorStep++;
 }
 
 void processGamepad() {
@@ -183,7 +211,8 @@ void processTrimLeft(int trimValue) {
 
 void processSteering(int axisRXValue) {
   adjustedSteeringValue = (90 - (axisRXValue / 9));
-  steeringServo.write(adjustedSteeringValue - steeringTrim);
+  // + connection-indicator twitch offset (0 when no indicator is running)
+  steeringServo.write(adjustedSteeringValue - steeringTrim + indicatorServoOffset);
 
   if (adjustedSteeringValue > 100) {
     steeringAdjustment = ((200 - adjustedSteeringValue) / 100);
@@ -233,12 +262,55 @@ void processAux(bool buttonValue) {
 }
 
 void moveMotor(int motorPin0, int motorPin1, int velocity) {
-  if (velocity > 1) {
-    analogWrite(motorPin0, velocity);
+  // Two per-motor protections for the H-bridge (static slot table):
+  //  * dead-time - on a direction flip, coast (both inputs LOW) for one control
+  //    tick, so the bridge never sees an instantaneous reversal;
+  //  * soft-start ramp - the applied duty steps toward the commanded duty, so
+  //    the motor eases into speed instead of slamming on.
+  const int RAMP_STEP = 16;   // duty units per tick (~50Hz) => ~320ms to full
+  static int    dtPin0[4]  = {-1, -1, -1, -1};
+  static int    dtPin1[4]  = {-1, -1, -1, -1};
+  static int8_t dtDir[4]   = {0, 0, 0, 0};
+  static bool   dtCoast[4] = {false, false, false, false};
+  static int    dtLevel[4] = {0, 0, 0, 0};   // currently applied duty magnitude
+
+  int8_t dir    = (velocity > 1) ? 1 : ((velocity < -1) ? -1 : 0);
+  int    target = (dir == 0) ? 0 : ((velocity < 0) ? -velocity : velocity);
+
+  int slot = -1, freeSlot = -1;
+  for (int i = 0; i < 4; i++) {
+    if (dtPin0[i] == motorPin0 && dtPin1[i] == motorPin1) { slot = i; break; }
+    if (freeSlot < 0 && dtPin0[i] == -1) freeSlot = i;
+  }
+  if (slot < 0 && freeSlot >= 0) {
+    slot = freeSlot;
+    dtPin0[slot] = motorPin0; dtPin1[slot] = motorPin1;
+    dtDir[slot] = 0; dtCoast[slot] = false; dtLevel[slot] = 0;
+  }
+
+  if (slot >= 0 && dir != 0 && dtDir[slot] != 0 && dir != dtDir[slot]) {
+    if (!dtCoast[slot]) {          // reversal: hold the bridge off for this tick
+      dtCoast[slot] = true;
+      dtLevel[slot] = 0;           // restart the ramp in the new direction
+      analogWrite(motorPin0, 0);
+      analogWrite(motorPin1, 0);
+      return;
+    }
+    dtCoast[slot] = false;         // dead-time served - allow the new direction
+  }
+  if (slot >= 0) dtDir[slot] = dir;
+
+  int level = (slot >= 0) ? dtLevel[slot] : target;
+  if (level < target)      level = min(target, level + RAMP_STEP);
+  else if (level > target) level = max(target, level - RAMP_STEP);
+  if (slot >= 0) dtLevel[slot] = level;
+
+  if (dir > 0) {
+    analogWrite(motorPin0, level);
     analogWrite(motorPin1, LOW);
-  } else if (velocity < -1) {
+  } else if (dir < 0) {
     analogWrite(motorPin0, LOW);
-    analogWrite(motorPin1, (-1 * velocity));
+    analogWrite(motorPin1, level);
   } else {
     analogWrite(motorPin0, 0);
     analogWrite(motorPin1, 0);
@@ -247,6 +319,18 @@ void moveMotor(int motorPin0, int motorPin1, int velocity) {
 
 void processControllers() {
   processGamepad();
+}
+
+// Failsafe: cut the drive and mast motors, centre the steering and drop the aux
+// output so a lost link can't leave the forklift driving or sticking at a limit.
+void safeStop() {
+  moveMotor(leftMotor0, leftMotor1, 0);
+  moveMotor(rightMotor0, rightMotor1, 0);
+  moveMotor(mastMotor0, mastMotor1, 0);
+  adjustedSteeringValue = 90 - steeringTrim;
+  steeringServo.write(adjustedSteeringValue);
+  digitalWrite(auxAttach0, LOW);
+  digitalWrite(auxAttach1, LOW);
 }
 
 // Arduino setup function. Runs in CPU 1
@@ -285,6 +369,8 @@ void setup() {
 
 // Arduino loop function. Runs in CPU 1.
 void loop() {
+  serviceConnectionIndicator();
+
   // This call fetches all the controllers' data.
   // Call this function in your main loop.
   if (dataUpdated) {
@@ -294,23 +380,10 @@ void loop() {
   else { 
     // Check if connection has timed out
     if (connectionActive && (millis() - lastPacketTime > CONNECTION_TIMEOUT)) {
-      // Connection lost, reset the flag so steering will flash on reconnection
+      // Link lost: fail safe at once (drive, mast, steering, aux).
       connectionActive = false;
-      // Stop motors for safety when connection is lost
-      moveMotor(leftMotor0, leftMotor1, 0);
-      moveMotor(rightMotor0, rightMotor1, 0);
-      moveMotor(mastMotor0, mastMotor1, 0);
+      safeStop();
     }
     vTaskDelay(1); 
-  }
-
-  // Check for connection timeout
-  if (connectionActive && (millis() - lastPacketTime > CONNECTION_TIMEOUT)) {
-    // Connection has timed out
-    connectionActive = false;
-    // Stop all motors
-    moveMotor(leftMotor0, leftMotor1, 0);
-    moveMotor(rightMotor0, rightMotor1, 0);
-    moveMotor(mastMotor0, mastMotor1, 0);
   }
 }

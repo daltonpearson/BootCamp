@@ -3,15 +3,17 @@
 [![All Contributors](https://img.shields.io/badge/all_contributors-2-orange.svg?style=flat-square)](#contributors-)
 <!-- ALL-CONTRIBUTORS-BADGE:END -->
 
-**BootCamp** is a wireless remote control system for multiple RC vehicles using ESP32 microcontrollers with ESP-NOW communication protocol. The system supports controlling different vehicle types (excavator, dump truck, semi-trailer, and forklift) from a single base station controller.
+**BootCamp** is a wireless remote control system for multiple RC vehicles using ESP32 microcontrollers with ESP-NOW communication protocol. The system supports controlling different vehicle types (excavator, dump truck, semi-trailer, and forklift) from a base station, with one or more Bluetooth controllers talking to it at once.
 
 ## System Overview
 
 BootCamp implements a **one-to-many** wireless control system where:
-- **Base Station**: Receives input from a Bluetooth controller and broadcasts commands via ESP-NOW
+- **Base Station**: Receives input from up to four Bluetooth controllers and broadcasts commands via ESP-NOW
 - **Vehicle Receivers**: Each vehicle has an ESP32 that receives commands and controls motors/servos
 - **Controller Support**: Xbox and PS4/DualShock controllers supported
 - **Multi-Vehicle**: Switch between vehicles using controller buttons
+- **Multi-Operator**: Several controllers can be connected at once, each driving its own vehicle
+- **Fail-Safe**: Vehicles stop themselves if the controller or base link goes quiet (see [Reliability & Failsafes](#reliability--failsafes))
 
 ## Project Structure
 
@@ -23,6 +25,7 @@ BootCamp/
 │   ├── dump.cpp        # Dump truck vehicle controller
 │   ├── semi.cpp        # Semi-trailer vehicle controller
 │   ├── fork.cpp        # Forklift vehicle controller
+│   └── trailer.cpp     # Trailer board (serial-linked from the semi-trailer)
 ├── platformio.ini      # Build configurations for each vehicle
 ├── lib/                # Project libraries
 ├── include/            # Header files
@@ -131,9 +134,82 @@ Use the misc buttons on your controller to switch between vehicles:
 - **Backward Button**: Previous vehicle (decrement receiver index)
 - **Reset Button**: Return to receiver index 0
 
+Every controller can select **any** vehicle — a pad is not tied to a particular machine, so the same
+controller can drive the excavator one minute and the semi-trailer the next. The only rule is that a
+vehicle has exactly one driver at a time: if the vehicle you would land on is currently held by
+another controller, the selection **skips over it** to the next free vehicle. Pressing **Reset**
+(PS) gives your vehicle up, which frees it for the other operator.
+
 **Button Mappings:**
 - **Xbox**: Guide button area controls
 - **PS4**: Share/Options/PS button controls
+
+#### **Multiple Controllers (Two Operators)**
+
+The base station supports **up to 4 Bluetooth controllers at once** (Bluepad32 limit). In practice
+that means two operators can drive two different vehicles at the same time, but the rules are
+deliberately loose:
+
+- **Any controller can drive any vehicle.** A controller is not bound to a particular machine — the
+  same pad can take the excavator, then the dump truck, then the forklift.
+- **Two operators, two vehicles, simultaneously.** Each controller has its own slot and its own
+  independent receiver index, so input from one never leaks into the other's vehicle.
+- **One driver per vehicle.** A vehicle can only be held by one controller at a time. If the vehicle
+  you would land on is already taken, your switch press **skips past it** to the next free one, so
+  you can't accidentally steal someone else's machine. If every vehicle is taken, the base prints
+  `SLOT:n no free vehicle to select` and leaves you where you are.
+- **Handing a vehicle over** is just a release: the current driver presses **PS** (or switches to a
+  different vehicle), the vehicle is freed, and the other controller can now select it.
+- **Disconnects free the vehicle** automatically, so a pad running out of battery doesn't lock a
+  vehicle out of the session.
+- Watch the serial monitor: each selection prints `SLOT:n selected vehicle index m`, so you can tell
+  which pad took which machine.
+
+> **Note:** Both controllers connect over Bluetooth and the commands go out over ESP-NOW. The
+> ESP32 shares a single radio between BT and WiFi/ESP-NOW, which the base firmware already handles.
+
+#### **Pairing (Important)**
+
+Pair each controller **one at a time, with the other controller powered OFF**. Bluepad32 can hold
+several already-paired controllers at once, but pairing a *second* new controller while another is
+connected is unreliable (you'll see `Failed to inquiry name` / `Unknown GAP connection type` in the
+serial monitor). Once both are paired, they reconnect normally - just press **PS** on each.
+
+- **To pair:** hold **Share + PS** until the light bar double-blinks, then release.
+- **To deselect:** press **PS**.
+- **Do not** call `BP32.forgetBluetoothKeys()` in the base firmware. It erases the stored keys and
+  forces re-pairing, which is exactly when the second controller fails to attach.
+
+#### **Speed Modes (Dump Truck & Semi-Trailer)**
+
+The dump truck and the semi-trailer both power up in a **restricted 50% speed mode**, which is
+gentler on the drivetrain and much easier to drive indoors.
+
+- **Triangle** toggles between **Restricted (50%)** and **Full (100%)**.
+- The toggle is **edge-triggered** (one press = one change, 250 ms debounce), and the first packet
+  after a controller connects only records the button state — a button that is already held, or a
+  stuck bit, can't silently flip the truck into full speed.
+- Restricted mode is restored every time the firmware starts, so the trucks never come up "hot".
+- The semi-trailer prints the new mode to the serial monitor (`Speed Mode: Restricted (50%)` /
+  `Speed Mode: Full (100%)`).
+- The excavator and forklift have no speed limit mode.
+
+#### **Connection Indicator**
+
+When a controller is paired to a vehicle, the vehicle acknowledges the link with a short,
+non-blocking indicator:
+
+| Vehicle | Indicator |
+|---|---|
+| Excavator | Cab lights flash three times |
+| Dump Truck | Lights flash three times, steering twitches ±8° |
+| Semi-Trailer | Marker lights (LT1–LT3) flash three times, steering twitches ±8° |
+| Forklift | Steering swings ±30° twice |
+
+The indicator is armed from the ESP-NOW receive callback but advanced from `loop()` via
+`serviceConnectionIndicator()`. That distinction matters: the old version used `delay(200)` per
+flash inside the callback, which stalled the WiFi task and dropped packets — exactly when the link
+was already marginal.
 
 ## Communication Protocol
 
@@ -149,6 +225,8 @@ typedef struct {
     uint16_t miscButtons;     // Misc button bitmask
     bool thumbR, thumbL;      // Thumb button states
     bool r1, l1, r2, l2;     // Shoulder button states
+    uint8_t controllerSlot;   // Which base controller slot sent this (0-3)
+    uint32_t selectionTime;   // millis() when this controller last changed vehicle
 } struct_message;
 ```
 
@@ -161,6 +239,45 @@ typedef struct {
 - **5**: Crane *(Coming Soon)*
 - **6**: SkidSteer *(Coming Soon)*
 
+## Reliability & Failsafes
+
+The radio is shared between Bluetooth (the pads) and WiFi/ESP-NOW (the vehicles), so the firmware
+assumes packets will be lost now and then. Three mechanisms keep a dropout from becoming a runaway
+vehicle.
+
+**Heartbeat (base → vehicles).** The base transmits at a fixed 20 ms (50 Hz) cadence for every
+connected controller, whether or not the sticks moved. Vehicles therefore never time out just
+because the operator is holding a steady line, and a new input is still sent immediately when it
+arrives.
+
+**Fast link-loss detection.** Each vehicle treats **500 ms without a packet** as a lost link (it used
+to be 3 s). On timeout it calls `safeStop()` once:
+
+| Vehicle | `safeStop()` behaviour |
+|---|---|
+| Excavator | Releases every MCP23017 H-bridge (boom, pivot, dipper, bucket tilt, thumb, aux, drive); servos hold position |
+| Dump Truck | Drive cut, steering recentred, dump-bed outputs released |
+| Semi-Trailer | Drive and smoke generator cut, steering recentred, lights off, trailer aux motors told to stop (serial `7` / `10`) |
+| Forklift | Drive and mast cut, steering recentred, aux output released |
+
+**Neutral packets (base side).** If a controller stops reporting for more than 500 ms while still
+paired, the base sends zeroed commands for that slot, so the vehicle stops immediately instead of
+holding the last stick value. After a controller actually disconnects the base repeats those zeroed
+packets for a further 300 ms, then releases the vehicle for another operator.
+
+> **Limitation:** the trailer board has no serial-silence watchdog of its own — it stops because the
+> semi-trailer sends it explicit stop commands. If the semi-trailer loses power outright its serial
+> link dies with it and the trailer aux motors keep their last state, so cut the trailer's power too.
+
+**Motor protection.** The PWM-driven H-bridges (dump truck, semi-trailer, forklift) get two
+protections in `moveMotor()`: a **dead-time**, where both inputs are held LOW for one control tick
+on a direction reversal so the bridge never sees an instantaneous reversal, and a **soft-start
+ramp** of 16 duty steps per tick (~320 ms from standstill to full) so the truck eases away instead
+of slamming. The excavator's MCP23017 outputs are on/off rather than PWM, so it gets dead-time only.
+Stick values inside each vehicle's deadband are a hard stop. This rework also fixed a copy/paste bug
+in the excavator, where the left drive motor's stop condition tested the right trigger (`r2`) instead
+of `l2`.
+
 ## Troubleshooting
 
 ### Common Issues
@@ -168,6 +285,13 @@ typedef struct {
 **Base station build fails:**
 - Make sure you ran `pio pkg uninstall -p espressif32` before building
 - This is required due to a dependency conflict with the ESP32 Bluetooth library
+
+**Base station build fails with `xtensa-esp32-elf-g++: error: CreateProcess: No such file or directory`:**
+- That is a Windows command-line-length limit, not a code error. The Bluepad32 framework adds enough
+  ESP-IDF include paths that the compile command for the bundled WiFi library exceeds ~32k characters.
+- Workarounds: build from a shorter path, or check your own code compiles with
+  `pio run -e base -t compiledb` and compile the generated `base.cpp` command through a response file
+  (`xtensa-esp32-elf-g++ @args.rsp`).
 
 **Controller not connecting:**
 - Ensure correct controller type is selected in `base.cpp`
@@ -178,6 +302,10 @@ typedef struct {
 - Check receiver index matches vehicle
 - Verify ESP-NOW initialization
 - Check power supply to vehicle ESP32
+
+**Vehicle stops on its own a moment after you let go, or when the base is switched off:**
+- That is the 500 ms link failsafe doing its job (see [Reliability & Failsafes](#reliability--failsafes)), not a fault
+- If it happens while you are still driving, check for 2.4 GHz interference or a failing pad battery
 
 **Inconsistent control:**
 - Check for controller drift (calibration may be needed)
@@ -246,6 +374,12 @@ The original project used Arduino `.ino` files with direct Bluetooth controller 
 - **Check battery levels** before operation
 - **Verify control response** after any changes
 - **Maintain clear line of sight** for ESP-NOW communication
+- **Treat the 500 ms failsafe as a backstop, not an emergency stop** — keep a physical power cut
+  within reach at all times
+- **Test the failsafe deliberately**: wheels off the ground, power the controller off mid-throttle,
+  and confirm the vehicle stops within about half a second
+- **Don't use vehicle ownership as a safety interlock** — it keeps two operators from fighting over
+  one machine, but it will not stop a vehicle on its own
 
 ## Credits
 
