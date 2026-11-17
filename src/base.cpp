@@ -105,7 +105,6 @@ uint32_t receiverIndexes[BP32_MAX_GAMEPADS];
 ControllerState gamepadStates[BP32_MAX_GAMEPADS];
 // Define the MAC address of the receiver
 uint8_t broadcastAddress[] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
-bool dataSent = true;
 
 // ---- Failsafe / link tuning ----
 #define HEARTBEAT_INTERVAL_MS 20   // link keep-alive cadence (50 Hz)
@@ -353,7 +352,6 @@ void processControllers() {
 
     i++;
   }
-  dataSent = true;
 }
 
 void loop() {
