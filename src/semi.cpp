@@ -21,7 +21,11 @@ typedef struct struct_message {
 bool dataUpdated;
 bool connectionActive = false; // Tracks if connection is currently active
 unsigned long lastPacketTime = 0; // Timestamp of last received packet
-const unsigned long CONNECTION_TIMEOUT = 3000; // 3 seconds timeout for connection
+// Failsafe window. The base heartbeats every 20ms, but ESP-NOW broadcast over a
+// radio shared with two Bluetooth links drops bursts, so allow several missed
+// heartbeats before cutting power. This is only a backstop: a real pad
+// disconnect is stopped immediately by the base's "neutral" packets.
+const unsigned long CONNECTION_TIMEOUT = 500; // ms without a packet = link lost
 struct_message receivedData;
 
 // Which base controller owns this vehicle (-1 = none) and the time of its last
@@ -80,7 +84,8 @@ Servo hitchServo;
 #define auxAttach5 26  // /
 
 // Forward declarations
-void flashConnectionIndicator();
+void flashConnectionIndicator();       // start the (non-blocking) indicator
+void serviceConnectionIndicator();     // advance it; call every loop()
 
 int lightSwitchButtonTime = 0;
 int lightSwitchTime = 0;
@@ -105,7 +110,10 @@ bool trailerAuxMtr2Reverse = false;
 bool hitchUp = true;
 bool trailerRampUp = true;
 bool trailerLegsUp = true;
-bool reducedSpeedMode = false;
+// Speed limit: RESTRICTED (50%) by default; press Triangle to toggle full speed.
+bool reducedSpeedMode = true;
+bool speedModeInit = false;
+uint16_t prevSpeedButtons = 0;
 unsigned long speedModeButtonTime = 0;
 unsigned long rampButtonTime = 0;
 unsigned long legsButtonTime = 0;
@@ -140,28 +148,90 @@ void OnDataRecv(const uint8_t * mac, const uint8_t *incomingData, int len) {
     }
 }
 
-// Function to flash lights as a connection indicator
+// Connection indicator - deliberately NON-BLOCKING (started from the ESP-NOW
+// receive callback; a delay() there would stall the WiFi task).
+bool indicatorRunning = false;
+uint8_t indicatorStep = 0;
+uint32_t indicatorStepTime = 0;
+int indicatorServoOffset = 0;   // steering twitch added while the indicator runs
+
 void flashConnectionIndicator() {
-  // Flash the lights 3 times when connected
-  for (int i = 0; i < 3; i++) {
-    digitalWrite(LT1, HIGH);
-    digitalWrite(LT2, HIGH);
-    digitalWrite(LT3, HIGH);
-    delay(200);
+  indicatorRunning = true;
+  indicatorStep = 0;
+  indicatorStepTime = millis();
+}
+
+void serviceConnectionIndicator() {
+  if (!indicatorRunning) return;
+  if (millis() - indicatorStepTime < 200) return;
+  indicatorStepTime = millis();
+  bool on = (indicatorStep % 2) == 0;
+  uint8_t level = on ? HIGH : LOW;
+  digitalWrite(LT1, level);
+  digitalWrite(LT2, level);
+  digitalWrite(LT3, level);
+  // Brief steering twitch alongside the light flashes. Applied as an offset in
+  // processSteering() so the 50Hz steering updates don't stomp it.
+  indicatorServoOffset = on ? 8 : -8;
+  if (++indicatorStep >= 6) {          // 3 on/off flashes
+    indicatorRunning = false;
     digitalWrite(LT1, LOW);
     digitalWrite(LT2, LOW);
     digitalWrite(LT3, LOW);
-    delay(200);
+    indicatorServoOffset = 0;
   }
 }
 
 void moveMotor(int motorPin0, int motorPin1, int velocity) {
-  if (velocity > 15) {
-    analogWrite(motorPin0, velocity);
+  // Two per-motor protections for the H-bridge (static slot table):
+  //  * dead-time - on a direction flip, coast (both inputs LOW) for one control
+  //    tick, so the bridge never sees an instantaneous reversal;
+  //  * soft-start ramp - the applied duty steps toward the commanded duty, so
+  //    the motor eases into speed instead of slamming on.
+  const int RAMP_STEP = 16;   // duty units per tick (~50Hz) => ~320ms to full
+  static int    dtPin0[4]  = {-1, -1, -1, -1};
+  static int    dtPin1[4]  = {-1, -1, -1, -1};
+  static int8_t dtDir[4]   = {0, 0, 0, 0};
+  static bool   dtCoast[4] = {false, false, false, false};
+  static int    dtLevel[4] = {0, 0, 0, 0};   // currently applied duty magnitude
+
+  int8_t dir    = (velocity > 15) ? 1 : ((velocity < -15) ? -1 : 0);
+  int    target = (dir == 0) ? 0 : ((velocity < 0) ? -velocity : velocity);
+
+  int slot = -1, freeSlot = -1;
+  for (int i = 0; i < 4; i++) {
+    if (dtPin0[i] == motorPin0 && dtPin1[i] == motorPin1) { slot = i; break; }
+    if (freeSlot < 0 && dtPin0[i] == -1) freeSlot = i;
+  }
+  if (slot < 0 && freeSlot >= 0) {
+    slot = freeSlot;
+    dtPin0[slot] = motorPin0; dtPin1[slot] = motorPin1;
+    dtDir[slot] = 0; dtCoast[slot] = false; dtLevel[slot] = 0;
+  }
+
+  if (slot >= 0 && dir != 0 && dtDir[slot] != 0 && dir != dtDir[slot]) {
+    if (!dtCoast[slot]) {          // reversal: hold the bridge off for this tick
+      dtCoast[slot] = true;
+      dtLevel[slot] = 0;           // restart the ramp in the new direction
+      analogWrite(motorPin0, 0);
+      analogWrite(motorPin1, 0);
+      return;
+    }
+    dtCoast[slot] = false;         // dead-time served - allow the new direction
+  }
+  if (slot >= 0) dtDir[slot] = dir;
+
+  int level = (slot >= 0) ? dtLevel[slot] : target;
+  if (level < target)      level = min(target, level + RAMP_STEP);
+  else if (level > target) level = max(target, level - RAMP_STEP);
+  if (slot >= 0) dtLevel[slot] = level;
+
+  if (dir > 0) {
+    analogWrite(motorPin0, level);
     analogWrite(motorPin1, LOW);
-  } else if (velocity < -15) {
+  } else if (dir < 0) {
     analogWrite(motorPin0, LOW);
-    analogWrite(motorPin1, (-1 * velocity));
+    analogWrite(motorPin1, level);
   } else {
     analogWrite(motorPin0, 0);
     analogWrite(motorPin1, 0);
@@ -227,14 +297,25 @@ void processTrailerRamp(int value) {
   }
 }
 
-void processSpeedMode(int value) {
-  // Triangle button toggles reduced speed mode with debouncing
-  if ((value & buttonMaskY) && (millis() - speedModeButtonTime > speedModeDebounceDelay)) {
-    reducedSpeedMode = !reducedSpeedMode; // Toggle the speed mode
-    Serial.print("Speed Mode: ");
-    Serial.println(reducedSpeedMode ? "Reduced (50%)" : "Normal (100%)");
-    speedModeButtonTime = millis();
+void processSpeedMode(uint16_t buttons) {
+  // Triangle toggles between restricted (the default) and full speed. This is
+  // EDGE-triggered (the old version re-fired every debounce period while the
+  // button was held) and the first packet after a connect only seeds
+  // prevSpeedButtons, so a sticky button bit at connect can't silently change
+  // the mode.
+  if (!speedModeInit) {
+    prevSpeedButtons = buttons;
+    speedModeInit = true;
+    return;
   }
+  uint16_t pressed = buttons & ~prevSpeedButtons;
+  prevSpeedButtons = buttons;
+  if (!(pressed & buttonMaskY)) return;
+  if (millis() - speedModeButtonTime < speedModeDebounceDelay) return;
+  speedModeButtonTime = millis();
+  reducedSpeedMode = !reducedSpeedMode;
+  Serial.print("Speed Mode: ");
+  Serial.println(reducedSpeedMode ? "Restricted (50%)" : "Full (100%)");
 }
 
 void processThrottle(int axisYValue) {
@@ -281,10 +362,8 @@ void processTrimAndHitch(int dpadValue) {
 void processSteering(int axisRXValue) {
   rawSteeringValue = 90 - (axisRXValue / 9); // Store raw steering value without trim
   adjustedSteeringValue = rawSteeringValue - steeringTrim; // Apply trim for actual steering
-  frontSteeringServo.write(180 - adjustedSteeringValue);
-
-  Serial.print("Steering Value:");
-  Serial.println(adjustedSteeringValue);
+  // + connection-indicator twitch offset (0 when no indicator is running)
+  frontSteeringServo.write(180 - adjustedSteeringValue + indicatorServoOffset);
 }
 
 void processLights(bool buttonValue) {
@@ -468,6 +547,24 @@ void processControllers() {
   processGamepad();
 }
 
+// Failsafe: stop the drive and smoke motors, centre the steering, switch the
+// lights off and tell the trailer daughter board to stop its aux motors.
+void safeStop() {
+  moveMotor(frontMotor0, frontMotor1, 0);
+  moveMotor(rearMotor0, rearMotor1, 0);
+  moveMotor(rearMotor2, rearMotor3, 0);
+  moveMotor(auxAttach2, auxAttach3, 0);   // smoke generator throttle
+  digitalWrite(auxAttach0, LOW);          // smoke generator on/off
+  digitalWrite(auxAttach1, LOW);
+  adjustedSteeringValue = 90 - steeringTrim;
+  frontSteeringServo.write(180 - adjustedSteeringValue);
+  digitalWrite(LT1, LOW);
+  digitalWrite(LT2, LOW);
+  digitalWrite(LT3, LOW);
+  Serial.println(7);                      // trailer aux motor 1 STOP
+  Serial.println(10);                     // trailer aux motor 2 STOP
+}
+
 void setup() {
   Serial.begin(115200);
 
@@ -529,6 +626,8 @@ void setup() {
 
 // Arduino loop function. Runs in CPU 1.
 void loop() {
+  serviceConnectionIndicator();
+
   if (dataUpdated) {
     processControllers();
     dataUpdated = false;
@@ -537,22 +636,8 @@ void loop() {
 
   // Check for connection timeout
   if (connectionActive && (millis() - lastPacketTime > CONNECTION_TIMEOUT)) {
+    // Link lost: fail safe at once (drive, smoke, steering, lights, trailer).
     connectionActive = false;
-    // Handle connection timeout (e.g., stop motors, reset values, etc.)
-    digitalWrite(rearMotor0, LOW);
-    digitalWrite(rearMotor1, LOW);
-    digitalWrite(rearMotor2, LOW);
-    digitalWrite(rearMotor3, LOW);
-    digitalWrite(frontMotor0, LOW);
-    digitalWrite(frontMotor1, LOW);
-    digitalWrite(auxAttach0, LOW);
-    digitalWrite(auxAttach1, LOW);
-    digitalWrite(auxAttach2, LOW);
-    digitalWrite(auxAttach3, LOW);
-    digitalWrite(auxAttach4, LOW);
-    digitalWrite(auxAttach5, LOW);
-    digitalWrite(LT1, LOW);
-    digitalWrite(LT2, LOW);
-    digitalWrite(LT3, LOW);
+    safeStop();
   }
 }

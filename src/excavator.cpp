@@ -19,7 +19,11 @@ typedef struct struct_message {
 bool dataUpdated;
 bool connectionActive = false; // Tracks if connection is currently active
 unsigned long lastPacketTime = 0; // Timestamp of last received packet
-const unsigned long CONNECTION_TIMEOUT = 3000; // 3 seconds timeout for connection
+// Failsafe window. The base heartbeats every 20ms, but ESP-NOW broadcast over a
+// radio shared with two Bluetooth links drops bursts, so allow several missed
+// heartbeats before cutting power. This is only a backstop: a real pad
+// disconnect is stopped immediately by the base's "neutral" packets.
+const unsigned long CONNECTION_TIMEOUT = 500; // ms without a packet = link lost
 struct_message receivedData;
 
 // Which base controller owns this vehicle (-1 = none) and the time of its last
@@ -55,7 +59,8 @@ uint32_t activeSelectionTime = 0;
 #define rightMotor1 5
 
 // Forward declarations
-void flashConnectionIndicator();
+void flashConnectionIndicator();       // start the (non-blocking) indicator
+void serviceConnectionIndicator();     // advance it; call every loop()
 
 Adafruit_MCP23X17 mcp;
 Servo clawServo;
@@ -126,82 +131,64 @@ void OnDataRecv(const uint8_t * mac, const uint8_t *incomingData, int len) {
 }
 
 
+// Direction dead-time for MCP-driven H-bridges: when the commanded direction
+// flips, coast (both outputs LOW) for one control tick before driving the new
+// direction, so the bridge never sees an instantaneous reversal. dir: +1/-1/0.
+void mcpMotor(int pin0, int pin1, int8_t dir) {
+  static const int N = 8;
+  static int    p0[N]      = {-1, -1, -1, -1, -1, -1, -1, -1};
+  static int    p1[N]      = {-1, -1, -1, -1, -1, -1, -1, -1};
+  static int8_t lastDir[N] = {0, 0, 0, 0, 0, 0, 0, 0};
+  static bool   coast[N]   = {false, false, false, false, false, false, false, false};
+
+  int slot = -1, freeSlot = -1;
+  for (int i = 0; i < N; i++) {
+    if (p0[i] == pin0 && p1[i] == pin1) { slot = i; break; }
+    if (freeSlot < 0 && p0[i] == -1) freeSlot = i;
+  }
+  if (slot < 0 && freeSlot >= 0) {
+    slot = freeSlot;
+    p0[slot] = pin0; p1[slot] = pin1; lastDir[slot] = 0; coast[slot] = false;
+  }
+
+  if (slot >= 0 && dir != 0 && lastDir[slot] != 0 && dir != lastDir[slot]) {
+    if (!coast[slot]) {          // reversal: hold the bridge off for this tick
+      coast[slot] = true;
+      mcp.digitalWrite(pin0, LOW);
+      mcp.digitalWrite(pin1, LOW);
+      return;
+    }
+    coast[slot] = false;         // dead-time served - allow the new direction
+  }
+  if (slot >= 0) lastDir[slot] = dir;
+
+  mcp.digitalWrite(pin0, dir > 0 ? HIGH : LOW);
+  mcp.digitalWrite(pin1, dir < 0 ? HIGH : LOW);
+}
+
 void processBoom(int axisYValue) {
   int adjustedValue = axisYValue / 2;
-  if (adjustedValue > 100) {
-    mcp.digitalWrite(mainBoom0, HIGH);
-    mcp.digitalWrite(mainBoom1, LOW);
-  } else if (adjustedValue < -100) {
-    mcp.digitalWrite(mainBoom0, LOW);
-    mcp.digitalWrite(mainBoom1, HIGH);
-  } else {
-    mcp.digitalWrite(mainBoom0, LOW);
-    mcp.digitalWrite(mainBoom1, LOW);
-  }
+  mcpMotor(mainBoom0, mainBoom1, adjustedValue > 100 ? 1 : (adjustedValue < -100 ? -1 : 0));
 }
 void processPivot(int axisYValue) {
   int adjustedValue = axisYValue / 2;
   // Create a deadzone in the center - only activate when stick is moved to edges
   int deadzone = 75; // Deadzone threshold
-  
-  if (adjustedValue > (100 + deadzone)) {
-    mcp.digitalWrite(pivot0, HIGH);
-    mcp.digitalWrite(pivot1, LOW);
-  } else if (adjustedValue < (-100 - deadzone)) {
-    mcp.digitalWrite(pivot0, LOW);
-    mcp.digitalWrite(pivot1, HIGH);
-  } else {
-    mcp.digitalWrite(pivot0, LOW);
-    mcp.digitalWrite(pivot1, LOW);
-  }
+
+  mcpMotor(pivot0, pivot1,
+           adjustedValue > (100 + deadzone) ? 1 : (adjustedValue < (-100 - deadzone) ? -1 : 0));
 }
 void processDipper(int axisYValue) {
   int adjustedValue = axisYValue / 2;
-  if (adjustedValue > 100) {
-    mcp.digitalWrite(dipper0, HIGH);
-    mcp.digitalWrite(dipper1, LOW);
-  } else if (adjustedValue < -100) {
-    mcp.digitalWrite(dipper0, LOW);
-    mcp.digitalWrite(dipper1, HIGH);
-  } else {
-    mcp.digitalWrite(dipper0, LOW);
-    mcp.digitalWrite(dipper1, LOW);
-  }
+  mcpMotor(dipper0, dipper1, adjustedValue > 100 ? 1 : (adjustedValue < -100 ? -1 : 0));
 }
 void processBucket(int axisYValue) {
   int adjustedValue = axisYValue / 2;
-  if (adjustedValue > 100) {
-    mcp.digitalWrite(tiltAttach0, HIGH);
-    mcp.digitalWrite(tiltAttach1, LOW);
-  } else if (adjustedValue < -100) {
-    mcp.digitalWrite(tiltAttach0, LOW);
-    mcp.digitalWrite(tiltAttach1, HIGH);
-  } else {
-    mcp.digitalWrite(tiltAttach0, LOW);
-    mcp.digitalWrite(tiltAttach1, LOW);
-  }
+  mcpMotor(tiltAttach0, tiltAttach1, adjustedValue > 100 ? 1 : (adjustedValue < -100 ? -1 : 0));
 }
 void processAux(int dpadValue) {
-  if (dpadValue == 1) {
-    mcp.digitalWrite(thumb0, HIGH);
-    mcp.digitalWrite(thumb1, LOW);
-  } else if (dpadValue == 2) {
-    mcp.digitalWrite(thumb0, LOW);
-    mcp.digitalWrite(thumb1, HIGH);
-  } else {
-    mcp.digitalWrite(thumb0, LOW);
-    mcp.digitalWrite(thumb1, LOW);
-  }
-  if (dpadValue == 4) {
-    mcp.digitalWrite(auxAttach0, HIGH);
-    mcp.digitalWrite(auxAttach1, LOW);
-  } else if (dpadValue == 8) {
-    mcp.digitalWrite(auxAttach0, LOW);
-    mcp.digitalWrite(auxAttach1, HIGH);
-  } else {
-    mcp.digitalWrite(auxAttach0, LOW);
-    mcp.digitalWrite(auxAttach1, LOW);
-  }
+  mcpMotor(thumb0, thumb1, dpadValue == 1 ? 1 : (dpadValue == 2 ? -1 : 0));
+  mcpMotor(auxAttach0, auxAttach1, dpadValue == 4 ? 1 : (dpadValue == 8 ? -1 : 0));
 }
 void processGamepad() {
   //Boom
@@ -238,26 +225,10 @@ void processGamepad() {
     }
     lightSwitchTime = millis();
   }
-  if (receivedData.r1 == 1) {
-    mcp.digitalWrite(rightMotor0, HIGH);
-    mcp.digitalWrite(rightMotor1, LOW);
-  } else if (receivedData.r2 == 1) {
-    mcp.digitalWrite(rightMotor0, LOW);
-    mcp.digitalWrite(rightMotor1, HIGH);
-  } else if (receivedData.r1 == 0 || receivedData.r2 == 0) {
-    mcp.digitalWrite(rightMotor0, LOW);
-    mcp.digitalWrite(rightMotor1, LOW);
-  }
-  if (receivedData.l1 == 1) {
-    mcp.digitalWrite(leftMotor0, HIGH);
-    mcp.digitalWrite(leftMotor1, LOW);
-  } else if (receivedData.l2 == 1) {
-    mcp.digitalWrite(leftMotor0, LOW);
-    mcp.digitalWrite(leftMotor1, HIGH);
-  } else if (receivedData.l1 == 0 || receivedData.r2 == 0) {
-    mcp.digitalWrite(leftMotor0, LOW);
-    mcp.digitalWrite(leftMotor1, LOW);
-  }
+  // Drive motors, now via the dead-time helper. Also fixes the old copy/paste
+  // bug in the left-motor stop condition (it tested l1/r2 instead of l2).
+  mcpMotor(rightMotor0, rightMotor1, receivedData.r1 == 1 ? 1 : (receivedData.r2 == 1 ? -1 : 0));
+  mcpMotor(leftMotor0, leftMotor1, receivedData.l1 == 1 ? 1 : (receivedData.l2 == 1 ? -1 : 0));
 
   if (receivedData.buttons & 1) {
     moveClawServoDown = true;
@@ -322,6 +293,29 @@ void processGamepad() {
 void processControllers() {
   processGamepad();
 }
+
+// Failsafe: release every actuator so a lost link can't keep driving the boom,
+// pivot, dipper, tilt, thumb or aux motors into their limits. The claw and aux
+// servos hold position (they are position-commanded, not continuously driven).
+void safeStop() {
+  mcp.digitalWrite(mainBoom0, LOW);
+  mcp.digitalWrite(mainBoom1, LOW);
+  mcp.digitalWrite(pivot0, LOW);
+  mcp.digitalWrite(pivot1, LOW);
+  mcp.digitalWrite(dipper0, LOW);
+  mcp.digitalWrite(dipper1, LOW);
+  mcp.digitalWrite(tiltAttach0, LOW);
+  mcp.digitalWrite(tiltAttach1, LOW);
+  mcp.digitalWrite(thumb0, LOW);
+  mcp.digitalWrite(thumb1, LOW);
+  mcp.digitalWrite(auxAttach0, LOW);
+  mcp.digitalWrite(auxAttach1, LOW);
+  mcp.digitalWrite(leftMotor0, LOW);
+  mcp.digitalWrite(leftMotor1, LOW);
+  mcp.digitalWrite(rightMotor0, LOW);
+  mcp.digitalWrite(rightMotor1, LOW);
+}
+
 void setup() {
 
   Serial.begin(115200);
@@ -364,10 +358,11 @@ void setup() {
 
 void loop() {
 
+  serviceConnectionIndicator();
+
   if (dataUpdated) {
 
     if (receivedData.receiverIndex == thisReceiverIndex) {
-      dumpGamepadState();
       processControllers();
       dataUpdated = false;
     }
@@ -375,31 +370,33 @@ void loop() {
   else { 
     // Check if connection has timed out
     if (connectionActive && (millis() - lastPacketTime > CONNECTION_TIMEOUT)) {
-      // Connection lost, reset the flag so lights will flash on reconnection
+      // Link lost: release every actuator at once.
       connectionActive = false;
-      // Stop all motors for safety when connection is lost
-      mcp.digitalWrite(mainBoom0, LOW);
-      mcp.digitalWrite(mainBoom1, LOW);
-      mcp.digitalWrite(dipper0, LOW);
-      mcp.digitalWrite(dipper1, LOW);
-      mcp.digitalWrite(pivot0, LOW);
-      mcp.digitalWrite(pivot1, LOW);
-      mcp.digitalWrite(leftMotor0, LOW);
-      mcp.digitalWrite(leftMotor1, LOW);
-      mcp.digitalWrite(rightMotor0, LOW);
-      mcp.digitalWrite(rightMotor1, LOW);
+      safeStop();
     }
     vTaskDelay(1); 
   }
 }
 
-// Function to flash lights as a connection indicator
+// Connection indicator - deliberately NON-BLOCKING (started from the ESP-NOW
+// receive callback; a delay() there would stall the WiFi task).
+bool indicatorRunning = false;
+uint8_t indicatorStep = 0;
+uint32_t indicatorStepTime = 0;
+
 void flashConnectionIndicator() {
-  // Flash the cab lights 3 times when connected
-  for (int i = 0; i < 3; i++) {
-    digitalWrite(cabLights, HIGH);
-    delay(200);
+  indicatorRunning = true;
+  indicatorStep = 0;
+  indicatorStepTime = millis();
+}
+
+void serviceConnectionIndicator() {
+  if (!indicatorRunning) return;
+  if (millis() - indicatorStepTime < 200) return;
+  indicatorStepTime = millis();
+  digitalWrite(cabLights, (indicatorStep % 2) == 0 ? HIGH : LOW);
+  if (++indicatorStep >= 6) {          // 3 on/off flashes
+    indicatorRunning = false;
     digitalWrite(cabLights, LOW);
-    delay(200);
   }
 }
