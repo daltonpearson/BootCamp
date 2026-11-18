@@ -13,19 +13,28 @@ typedef struct struct_message {
     uint32_t brake, throttle;
     uint16_t miscButtons;
     bool thumbR, thumbL, r1, l1, r2, l2;
+    uint8_t controllerSlot;   // Which base-station controller slot sent this packet
+    uint32_t selectionTime;   // millis() when that controller last changed vehicle
 } struct_message;
 bool dataUpdated;
 bool initialConnectionMade = false; // Flag to track if initial connection has been established
 bool connectionActive = false; // Tracks if connection is currently active
 unsigned long lastPacketTime = 0; // Timestamp of last received packet
-const unsigned long CONNECTION_TIMEOUT = 3000; // 3 seconds timeout for connection
+// Failsafe window. The base heartbeats every 20ms, but ESP-NOW broadcast over a
+// radio shared with two Bluetooth links drops bursts, so allow several missed
+// heartbeats before cutting power. This is only a backstop: a real pad
+// disconnect is stopped immediately by the base's "neutral" packets.
+const unsigned long CONNECTION_TIMEOUT = 500; // ms without a packet = link lost
 struct_message receivedData;
+
+// Which base controller owns this vehicle (-1 = none) and the time of its last
+// deliberate selection. Keeps two controllers from fighting over one vehicle.
+int activeControllerSlot = -1;
+uint32_t activeSelectionTime = 0;
 // ControllerPtr myControllers[BP32_MAX_GAMEPADS];
 
 #define steeringServoPin 23
 #define auxServoPin 22
-#define cabLights 32
-#define auxLights 33
 
 #define auxAttach0 25  // Used for controlling auxiliary attachment movement
 #define auxAttach1 26  // Used for controlling auxiliary attachment movement
@@ -43,7 +52,8 @@ struct_message receivedData;
 #define STOP 0
 
 // Forward function declarations
-void flashConnectionIndicator();
+void flashConnectionIndicator();       // start the (non-blocking) indicator
+void serviceConnectionIndicator();     // advance it; call every loop()
 
 Servo steeringServo;
 Servo auxServo;
@@ -57,7 +67,15 @@ bool lightsOn = false;
 void OnDataRecv(const uint8_t * mac, const uint8_t *incomingData, int len) {
     struct_message tempReceivedData;
     memcpy(&tempReceivedData, incomingData, sizeof(receivedData));
-    if (tempReceivedData.receiverIndex == thisReceiverIndex){
+
+    // Ownership filter: the current owner keeps control; another controller can
+    // take over only by making a newer, deliberate vehicle selection.
+    bool owned = (tempReceivedData.controllerSlot == activeControllerSlot);
+    bool newer = (tempReceivedData.selectionTime > activeSelectionTime);
+    if (tempReceivedData.receiverIndex == thisReceiverIndex &&
+        (activeControllerSlot == -1 || owned || newer)) {
+      activeControllerSlot = tempReceivedData.controllerSlot;
+      if (newer) activeSelectionTime = tempReceivedData.selectionTime;
       memcpy(&receivedData, &tempReceivedData, sizeof(receivedData));
       dataUpdated = true;
       
@@ -83,16 +101,75 @@ void OnDataRecv(const uint8_t * mac, const uint8_t *incomingData, int len) {
 }
 
 void moveMotor(int motorPin0, int motorPin1, int velocity) {
-  if (velocity > 15) {
-    analogWrite(motorPin0, velocity);
+  // Two per-motor protections for the H-bridge (static slot table):
+  //  * dead-time - on a direction flip, coast (both inputs LOW) for one control
+  //    tick, so the bridge never sees an instantaneous reversal;
+  //  * soft-start ramp - the applied duty steps toward the commanded duty, so
+  //    the motor eases into speed instead of slamming on.
+  const int RAMP_STEP = 16;   // duty units per tick (~50Hz) => ~320ms to full
+  static int    dtPin0[4]  = {-1, -1, -1, -1};
+  static int    dtPin1[4]  = {-1, -1, -1, -1};
+  static int8_t dtDir[4]   = {0, 0, 0, 0};
+  static bool   dtCoast[4] = {false, false, false, false};
+  static int    dtLevel[4] = {0, 0, 0, 0};   // currently applied duty magnitude
+
+  int8_t dir    = (velocity > 15) ? 1 : ((velocity < -15) ? -1 : 0);
+  int    target = (dir == 0) ? 0 : ((velocity < 0) ? -velocity : velocity);
+
+  int slot = -1, freeSlot = -1;
+  for (int i = 0; i < 4; i++) {
+    if (dtPin0[i] == motorPin0 && dtPin1[i] == motorPin1) { slot = i; break; }
+    if (freeSlot < 0 && dtPin0[i] == -1) freeSlot = i;
+  }
+  if (slot < 0 && freeSlot >= 0) {
+    slot = freeSlot;
+    dtPin0[slot] = motorPin0; dtPin1[slot] = motorPin1;
+    dtDir[slot] = 0; dtCoast[slot] = false; dtLevel[slot] = 0;
+  }
+
+  if (slot >= 0 && dir != 0 && dtDir[slot] != 0 && dir != dtDir[slot]) {
+    if (!dtCoast[slot]) {          // reversal: hold the bridge off for this tick
+      dtCoast[slot] = true;
+      dtLevel[slot] = 0;           // restart the ramp in the new direction
+      analogWrite(motorPin0, 0);
+      analogWrite(motorPin1, 0);
+      return;
+    }
+    dtCoast[slot] = false;         // dead-time served - allow the new direction
+  }
+  if (slot >= 0) dtDir[slot] = dir;
+
+  int level = (slot >= 0) ? dtLevel[slot] : target;
+  if (level < target)      level = min(target, level + RAMP_STEP);
+  else if (level > target) level = max(target, level - RAMP_STEP);
+  if (slot >= 0) dtLevel[slot] = level;
+
+  if (dir > 0) {
+    analogWrite(motorPin0, level);
     analogWrite(motorPin1, LOW);
-  } else if (velocity < -15) {
+  } else if (dir < 0) {
     analogWrite(motorPin0, LOW);
-    analogWrite(motorPin1, (-1 * velocity));
+    analogWrite(motorPin1, level);
   } else {
     analogWrite(motorPin0, 0);
     analogWrite(motorPin1, 0);
+    // Fully stopped: clear the ramp/dead-time state so the next move starts clean.
+    if (slot >= 0) {
+      dtLevel[slot] = 0;
+      dtCoast[slot] = false;
+    }
   }
+}
+
+// Failsafe: cut the drive, centre the steering and release the dump bed, so a
+// lost link can neither run the truck on nor hold an accessory at its limit.
+void safeStop() {
+  moveMotor(leftMotor0, leftMotor1, 0);
+  moveMotor(rightMotor0, rightMotor1, 0);
+  adjustedSteeringValue = 90 - steeringTrim;
+  steeringServo.write(adjustedSteeringValue);
+  digitalWrite(auxAttach2, LOW);
+  digitalWrite(auxAttach3, LOW);
 }
 
 void moveServo(int movement, Servo &servo, int &servoValue) {
@@ -114,21 +191,71 @@ void moveServo(int movement, Servo &servo, int &servoValue) {
   }
 }
 
-// Function to flash lights as a connection indicator
+// Connection indicator - deliberately NON-BLOCKING. It is (re)started from the
+// ESP-NOW receive callback, so any delay() here would stall the WiFi task and
+// cause further packet loss. flashConnectionIndicator() just arms it;
+// serviceConnectionIndicator() advances the flash from loop().
+bool indicatorRunning = false;
+uint8_t indicatorStep = 0;
+uint32_t indicatorStepTime = 0;
+int indicatorServoOffset = 0;   // steering twitch added while the indicator runs
+
 void flashConnectionIndicator() {
-  // Flash the lights 3 times when connected
-  for (int i = 0; i < 3; i++) {
-    digitalWrite(auxAttach0, HIGH);
-    digitalWrite(auxAttach1, LOW);
-    delay(200);
+  indicatorRunning = true;
+  indicatorStep = 0;
+  indicatorStepTime = millis();
+}
+
+void serviceConnectionIndicator() {
+  if (!indicatorRunning) return;
+  if (millis() - indicatorStepTime < 200) return;
+  indicatorStepTime = millis();
+  bool on = (indicatorStep % 2) == 0;
+  digitalWrite(auxAttach0, on ? HIGH : LOW);
+  digitalWrite(auxAttach1, LOW);
+  // Brief steering twitch (small +/-8 deg swing) alongside the light flashes.
+  // Applied as an offset in processSteering() so it survives the 50Hz updates.
+  indicatorServoOffset = on ? 8 : -8;
+  if (++indicatorStep >= 6) {          // 3 on/off flashes
+    indicatorRunning = false;
     digitalWrite(auxAttach0, LOW);
     digitalWrite(auxAttach1, LOW);
-    delay(200);
+    indicatorServoOffset = 0;
   }
+}
+
+// --- Speed limiting -------------------------------------------------------
+// Restricted by default; press Triangle to toggle between restricted and full
+// speed. Edge-triggered (one press = one toggle) with a debounce, and the first
+// packet after a connect only seeds prevButtons so a sticky button bit at
+// connect can't silently switch us to full speed.
+const uint16_t buttonMaskTriangle = 8;         // PS4 Triangle
+const uint32_t SPEED_MODE_DEBOUNCE = 250;      // ms
+const int      RESTRICTED_SPEED_PERCENT = 50;  // top speed while restricted
+bool     fullSpeedMode = false;                // false = restricted (default)
+bool     speedModeInit = false;
+uint16_t prevButtons   = 0;
+uint32_t speedModeTime = 0;
+
+void processSpeedMode(uint16_t buttons) {
+  if (!speedModeInit) {          // seed on first packet; do not act on it
+    prevButtons = buttons;
+    speedModeInit = true;
+    return;
+  }
+  uint16_t pressed = buttons & ~prevButtons;
+  prevButtons = buttons;
+  if (!(pressed & buttonMaskTriangle)) return;
+  if (millis() - speedModeTime < SPEED_MODE_DEBOUNCE) return;
+  speedModeTime = millis();
+  fullSpeedMode = !fullSpeedMode;
 }
 
 void processThrottle(int axisYValue) {
   int adjustedThrottleValue = axisYValue / 2;
+  if (!fullSpeedMode) {
+    adjustedThrottleValue = adjustedThrottleValue * RESTRICTED_SPEED_PERCENT / 100;
+  }
   moveMotor(leftMotor0, leftMotor1, adjustedThrottleValue);
   moveMotor(rightMotor0, rightMotor1, adjustedThrottleValue);
 }
@@ -153,7 +280,8 @@ void processTrimLeft(int trimValue)
 
 void processSteering(int axisRXValue) {
   adjustedSteeringValue = (90 - (axisRXValue / 11))-steeringTrim;
-  steeringServo.write(adjustedSteeringValue);
+  // + the connection-indicator twitch offset (0 when no indicator is running)
+  steeringServo.write(adjustedSteeringValue + indicatorServoOffset);
 }
 
 void processDumpBed(int dpadValue) {
@@ -194,6 +322,8 @@ void processGamepad() {
   processDumpBed(receivedData.dpad);
   //Aux
   processAux(receivedData.thumbR);
+  //Speed mode (Triangle toggles restricted <-> full speed)
+  processSpeedMode(receivedData.buttons);
 
   processTrimRight(receivedData.r1);
   processTrimLeft(receivedData.l1);
@@ -234,11 +364,12 @@ void setup() {
       return;
   }
   esp_now_register_recv_cb(OnDataRecv);
-
 }
 
 
 void loop() {
+  serviceConnectionIndicator();
+
   if (dataUpdated) {
     // dumpGamepadState();
     processControllers();
@@ -247,11 +378,9 @@ void loop() {
   else { 
     // Check if connection has timed out
     if (connectionActive && (millis() - lastPacketTime > CONNECTION_TIMEOUT)) {
-      // Connection lost, reset the flag so lights will flash on reconnection
+      // Link lost: fail safe at once (motors, steering, dump bed).
       connectionActive = false;
-      // Stop motors for safety when connection is lost
-      moveMotor(leftMotor0, leftMotor1, 0);
-      moveMotor(rightMotor0, rightMotor1, 0);
+      safeStop();
     }
     vTaskDelay(1); 
   }
